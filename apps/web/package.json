@@ -1,0 +1,12 @@
+{
+  "name": "@crazy-eights/web",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@crazy-eights/game-server": "*",
+    "@crazy-eights/protocol": "*",
+    "@fontsource/barlow-condensed": "^5.2.0",
+    "@fontsource-variable/inter": "^5.2.0",
+    "phaser": "4.2.1"
+  }
+}

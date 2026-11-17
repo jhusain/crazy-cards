@@ -1,0 +1,17 @@
+{
+  "name": "crazy-eights",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev": "vite apps/web --host 0.0.0.0",
+    "check": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test packages/game-server/test/*.test.ts apps/web/test/*.test.ts",
+    "build": "npm run check && vite build apps/web && node scripts/make-standalone.mjs"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "vite": "7.2.2"
+  }
+}

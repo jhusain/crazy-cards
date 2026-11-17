@@ -1,0 +1,67 @@
+name: Build and publish Crazy Eights
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: crazy-cards-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - name: Update gh-pages
+        env:
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          target="$(mktemp -d)"
+          if git ls-remote --exit-code origin refs/heads/gh-pages > /dev/null; then
+            git fetch --no-tags origin refs/heads/gh-pages
+            git worktree add --detach "$target" FETCH_HEAD
+          else
+            result=$?
+            if [[ $result != 2 ]]; then exit "$result"; fi
+            git worktree add --detach "$target" HEAD
+            git -C "$target" switch --orphan gh-pages
+          fi
+          trap 'git worktree remove --force "$target"' EXIT
+          git -C "$target" rm -r --ignore-unmatch .
+          cp dist/index.html "$target/index.html"
+          touch "$target/.nojekyll"
+          git -C "$target" add index.html .nojekyll
+          if ! git -C "$target" diff --cached --quiet; then
+            git -C "$target" -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -m "Build ${SOURCE_COMMIT}"
+            git -C "$target" push origin HEAD:refs/heads/gh-pages
+          fi
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.pages.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v5
+        id: pages

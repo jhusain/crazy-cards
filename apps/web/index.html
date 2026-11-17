@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#151c19">
+    <meta name="description" content="Play the original Crazy Eights computer opponent at a touch-first card table.">
+    <title>Crazy Eights</title>
+  </head>
+  <body>
+    <main class="cabinet">
+      <header class="titlebar">
+        <button class="menu-toggle" id="menu-toggle" aria-label="Game menu" popovertarget="game-menu">
+          <span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span>
+        </button>
+        <div class="scoreboard" aria-label="Scoreboard">
+          <div class="score-player"><span>You</span><strong id="your-score">0</strong></div>
+          <div class="round" id="round-number">Round 1</div>
+          <div class="score-player cpu-score"><strong id="cpu-score">0</strong><span>Computer</span></div>
+        </div>
+        <div id="game-menu" class="game-menu" popover aria-label="Game menu">
+          <button id="open-rules" aria-haspopup="dialog">Rules</button>
+          <button id="open-deck" aria-haspopup="dialog">Deck art</button>
+          <button id="open-settings" aria-haspopup="dialog">Settings</button>
+        </div>
+      </header>
+
+      <section class="table" id="table" aria-label="Crazy Eights table">
+        <div class="turn-light opponent-light" aria-hidden="true"></div>
+        <div class="turn-light player-light" aria-hidden="true"></div>
+        <div id="board" class="board"></div>
+        <div class="board-overlay">
+          <button class="table-background" id="table-background" aria-label="Draw a card" disabled></button>
+          <button class="card-target" id="stock-pile" aria-label="Draw from the deck" disabled></button>
+          <button class="card-target" id="discard-pile" aria-label="Discard pile" disabled></button>
+          <div id="card-targets"></div>
+          <div id="table-notice" class="table-notice" hidden>
+            <p id="notice-text"></p>
+            <button id="next-round" class="quiet" hidden>Next round</button>
+          </div>
+          <p id="table-status" class="visually-hidden" aria-live="polite">Dealing cards…</p>
+        </div>
+        <div class="table-actions">
+          <button class="quiet" id="replay-button" disabled>Instant Replay</button>
+          <button class="quiet" id="restart-button" aria-haspopup="dialog">Reset Match</button>
+        </div>
+      </section>
+      <button type="button" id="menu-shield" class="menu-shield" aria-label="Close game menu"></button>
+      <button type="button" id="replay-shield" class="replay-shield" aria-label="Stop instant replay" hidden></button>
+    </main>
+
+    <dialog id="rules-dialog" aria-labelledby="rules-title">
+      <div class="dialog-heading"><h2 id="rules-title">House rules</h2><button class="quiet" data-close>Close</button></div>
+      <ul class="rules-list">
+        <li>Tap a card to queue it. Flick a matching card up from your hand to play it immediately when it has no card that can follow it. Tap the <b>discard pile</b> or flick any queued card up to play the queue. Flick any queued card down to clear the queue.</li>
+        <li><b>Eights</b> are wild. A single eight must call a different suit. With multiple eights, the last eight can call any suit.</li>
+        <li><b>Aces and jacks</b> skip the opponent. <b>Twos</b> make them draw two per card in the stack, and the <b>queen of spades</b> makes them draw five. A special effect can be covered by an ordinary card in the combo. After an ace or jack, you can queue another play that matches the suit of the last card.</li>
+        <li>Tap the table or deck to clear a queue or draw. After drawing, tap the table or either pile to pass. The table draws for you when you have no legal play and passes if you still can’t play.</li>
+        <li>On your turn, tap <b>Instant Replay</b> to see the last sequence at half speed, including your draw and current queue. Tap anywhere to return to the game.</li>
+        <li>Going out only wins when your turn comes back. If you both go out, the round is a tie. The winner gains one point for each card the other player has left, and the loser gives up that many points.</li>
+      </ul>
+    </dialog>
+    <dialog id="suit-dialog" aria-labelledby="suit-title">
+      <div class="dialog-heading"><h2 id="suit-title">Call a suit</h2><button class="quiet" data-close>Cancel</button></div>
+      <div id="suit-buttons" class="suit-buttons"></div>
+    </dialog>
+    <dialog id="deck-dialog" aria-labelledby="deck-title">
+      <div class="dialog-heading"><h2 id="deck-title">Deck art</h2><button class="quiet" data-close>Close</button></div>
+      <div id="deck-options" class="deck-options"></div>
+    </dialog>
+    <dialog id="settings-dialog" aria-labelledby="settings-title">
+      <div class="dialog-heading"><h2 id="settings-title">Settings</h2><button class="quiet" data-close>Close</button></div>
+      <div class="settings-controls">
+        <div class="setting">
+          <label for="animation-speed">Animation speed</label>
+          <output id="animation-speed-value" for="animation-speed">1×</output>
+          <input id="animation-speed" type="range" min="0" max="15" step="1" value="10" aria-valuetext="1×">
+        </div>
+        <div class="setting">
+          <label for="ai-pause">Pause between computer plays</label>
+          <output id="ai-pause-value" for="ai-pause">1 s</output>
+          <input id="ai-pause" type="range" min="1" max="3" step="0.25" value="1" aria-valuetext="1 second">
+        </div>
+        <div class="setting">
+          <label for="pickup-animation">Pick up Card Animation</label>
+          <select id="pickup-animation">
+            <option value="sequential">Sequential</option>
+            <option value="concurrent">Concurrent</option>
+          </select>
+        </div>
+        <div class="setting">
+          <label class="setting-check"><input id="danger-warning" type="checkbox" checked> Show danger warning</label>
+        </div>
+        <div class="setting">
+          <label class="setting-check"><input id="always-play-wild" type="checkbox"> Always play wild card on flick</label>
+        </div>
+        <div class="setting">
+          <label for="danger-threshold">Danger Warning Threshold</label>
+          <output id="danger-threshold-value" for="danger-threshold">1 card</output>
+          <input id="danger-threshold" type="range" min="0" max="5" step="1" value="1" aria-valuetext="1 card">
+        </div>
+      </div>
+    </dialog>
+    <dialog id="restart-dialog" aria-labelledby="restart-title">
+      <div class="dialog-heading"><h2 id="restart-title">Reset match?</h2><button class="quiet" data-close>Cancel</button></div>
+      <p>The score will reset and a new round will be dealt.</p>
+      <button class="action primary" id="confirm-restart">Reset Match</button>
+    </dialog>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
