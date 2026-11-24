@@ -255,7 +255,8 @@ export class CardTable extends Phaser.Scene {
 
       const stagedTargets = layout.piles.play.map((position, index) => {
         const card = staged[index]!;
-        const depth = CARD_DEPTH.play + index;
+        // Preserve the original queue order while its committed prefix slides away.
+        const depth = CARD_DEPTH.play + (stagedCommit ? view.visibleDiscard.length : 0) + index;
         return { card, position, dimmed: false, staged: true, depth };
       });
       const legal = new Set(view.legalLeads);
@@ -482,7 +483,9 @@ export class CardTable extends Phaser.Scene {
       const enemyIndex = Math.max(0, (opponent?.length ?? 0) - last.length + index);
       const from = playerPlayed ? previousPositions.get(card.id) ?? at((width - layout.handWidth) / 2, layout.handY, layout.handWidth)
         : opponent?.[enemyIndex] ?? stock;
-      const depth = playerPlayed ? CARD_DEPTH.staging + PLAY_SLOTS + index : CARD_DEPTH.opponent + enemyIndex;
+      // A committed prefix retains its staged depth below the remaining queue.
+      // Direct plays stay above the table throughout the flight and collapse.
+      const depth = (alreadyQueued ? CARD_DEPTH.play : CARD_DEPTH.staging + PLAY_SLOTS) + index;
       const reel = !playerPlayed && index === last.length - 1 && card.special === "wild"
         ? wildReel(card.suit, card.calledSuit ?? card.suit, Math.random, wildSuitOptions(previous!.view.activeSuit, last.length)) : undefined;
       const image = this.drawImage(this.art.face(card, reel ? { suits: reel, progress: 0 } : undefined), from, depth);
@@ -491,7 +494,6 @@ export class CardTable extends Phaser.Scene {
       return { image, from, appended: alreadyQueued ? from : landing[index]!, collapsed, target: targets[index]!, id: card.id, card, reel };
     });
 
-    let landed = false;
     let soundedStop = 0;
     let fireSoundStarted = false;
     if (incoming.some(card => card.reel)) this.board.dataset.wildReel = String(last.at(-1)!.id);
@@ -514,10 +516,6 @@ export class CardTable extends Phaser.Scene {
         return;
       }
 
-      if (!landed) {
-        landed = true;
-        incoming.forEach(({ image }, index) => image.setDepth(CARD_DEPTH.discard + old.length + index));
-      }
       const slide = ease(unit((elapsed - timing.collapseStart) / (timing.collapseEnd - timing.collapseStart)));
       const restore = ease(unit((elapsed - timing.returnStart) / Math.max(1, timing.total - timing.returnStart)));
       if (fire && timing.burnStart !== null) {
