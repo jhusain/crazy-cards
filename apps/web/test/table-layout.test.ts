@@ -328,19 +328,24 @@ test("overlapping rows achieve the target width while every face and suit stays 
  assert(last.y+cornerHeight(last)<=740-30+.001);
 });
 
-test("the integrated tablet layout explores non-greedy group partitions at the target width", () => {
+test("narrow screens explore non-greedy partitions while tablets prefer the widest row", () => {
   const cards = [8, 12, 12, 10, 10, 5, 5].map(rank => ({ rank }));
   const { layout, hand } = planTableLayout(800, 1050, { cards, target: 240, keepGroups: true });
-  assert.deepEqual(hand.rows.map(row => row.length), [3, 4]);
+  assert.deepEqual(hand.rows.map(row => row.length), [7]);
   close(hand.width, 240);
+  const narrow = planTableLayout(360, 1000, { cards, target: 240, keepGroups: true });
+  assert.deepEqual(narrow.hand.rows.map(row => row.length), [3, 4]);
+  close(narrow.hand.width, 240);
   assert(layout.pileWidth >= 192 && layout.pileWidth <= 240);
   close(layout.opponentWidth, layout.pileWidth);
   close(layout.tableHeight - layout.inset - 10 - hand.positions.at(-1)!.y,
     2 * cornerHeight(hand.positions.at(-1)!));
-  assert(Math.abs(layout.opponentVisible - layout.pileHeight - layout.inset) <= 2);
+  assert(layout.opponentVisible - layout.pileHeight >= layout.inset - .001);
+  close(layout.pileY + layout.pileHeight / 2, 1050 / 2);
+  close(layout.opponentVisible - layout.pileHeight / 2, 1050 / 6);
 });
 
-test("integrated layouts preserve visible corners, shared pile sizes, and symmetric clearance", () => {
+test("integrated layouts preserve visible corners, shared pile sizes, and minimum clearance", () => {
   for (const [w, h] of [[360, 650], [800, 1050], [1024, 700], [850, 270]] as const) {
     for (const count of [1, 7, 18, 52]) for (const keepGroups of [true, false]) {
       const cards = Array.from({ length: count }, (_, i) => ({ rank: Math.floor(i / 4) }));
@@ -351,8 +356,8 @@ test("integrated layouts preserve visible corners, shared pile sizes, and symmet
         assert(layout.pileWidth <= target);
         close(layout.opponentWidth, layout.pileWidth);
         assert(layout.opponentVisible >= layout.pileHeight / 2 - .001);
-        close(layout.pileY - layout.opponentVisible, layout.handY - layout.pileY - layout.pileHeight);
-        close(layout.handY - layout.pileY - layout.stockHeight, 24);
+        assert(layout.pileY - layout.opponentVisible >= 24 + layout.stockHeight - layout.pileHeight - .001);
+        assert(layout.handY - layout.pileY - layout.stockHeight >= 24 - .001);
         const panel = automaticActionPosition(layout);
         close(panel.width, layout.pileWidth);
         close(panel.y, layout.pileY);
@@ -382,4 +387,25 @@ test("committed multi-group plays retain their layout while the remaining hand i
   assert.deepEqual(next.piles.stock, original.piles.stock);
   assert.deepEqual(next.piles.play, original.piles.play.slice(2));
   assert.deepEqual(next.piles.discard[0], original.piles.discard[0]);
+});
+
+test("three cards stay in one row and the three zones spread into available vertical space", () => {
+  const cards = [1, 2, 3].map(rank => ({ rank }));
+  for (const [width, height] of [[800, 1050], [800, 1600], [1500, 2000]] as const) {
+    const { layout, hand } = planTableLayout(width, height, { cards, target: 240, keepGroups: true });
+    assert.deepEqual(hand.rows.map(row => row.length), [3]);
+    close(hand.width, 240);
+    close(height - layout.inset - 10 - hand.positions[0]!.y, 2 * cornerHeight(hand.positions[0]!));
+    close(layout.pileY + layout.pileHeight / 2, height / 2);
+    close(layout.opponentVisible - layout.pileHeight / 2, height / 6);
+    assert(layout.handY - layout.pileY - layout.stockHeight > 24);
+    assert(layout.pileY - layout.opponentVisible > 24);
+  }
+});
+
+test("widest row wins even when a narrower partition has the same row count", () => {
+  const cards = [1, 1, 2, 2, 3, 3, 3].map(rank => ({rank}));
+  const { hand } = planTableLayout(390, 1000, { cards, target: 240, keepGroups: true });
+  close(hand.width, 240);
+  assert.deepEqual(hand.rows.map(row => row.length), [2, 5]);
 });
