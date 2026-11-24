@@ -68,6 +68,7 @@ export class CardTable extends Phaser.Scene {
   private state?: BoardState;
   private priorCardPositions = new Map<number, CardPosition>();
   private priorCardShades = new Map<number, number>();
+  private priorHandDepths = new Map<number, number>();
   private priorStockPosition?: CardPosition;
   private stagingFlights = new Set<number>();
   private queuedSlots?: Omit<QueuedPileSlots, "playedCount"> & { round: number; ids: number[] };
@@ -539,23 +540,40 @@ export class CardTable extends Phaser.Scene {
     const ready = handReadinessTimeline(view);
     const drawOrder = new Map(draw ? view.event?.drawnCards?.map((id, index) => [id, index]) : []);
     const arrivals: Arrival[] = [];
+    const previousDepths = this.priorHandDepths;
+    this.priorHandDepths = new Map();
+    const drawShifts: Array<(progress: number) => void> = [];
     for (const { card, position, dimmed, depth } of targets) {
-      const image = this.drawImage(this.art.face(card), position, depth);
+      const drawIndex = drawOrder.get(card.id);
+      const from = previousPositions.get(card.id);
+      const initialDepth = draw && drawIndex === undefined && from
+        ? previousDepths.get(card.id) ?? depth : depth;
+      const image = this.drawImage(this.art.face(card), position, initialDepth);
+      this.priorHandDepths.set(card.id, initialDepth);
       const button = buttons.get(card.id)!;
       this.priorCardPositions.set(card.id, position);
       this.positionButton(button, position);
       const move = (from: CardPosition, to: CardPosition, t: number) =>
         this.positionButton(button, this.moveCard(image, from, to, t, card.id));
-      const drawIndex = drawOrder.get(card.id);
-      const from = previousPositions.get(card.id);
       if (initialDeal) {
         this.deal(image, stock, position, HAND_DEAL);
       } else if (drawIndex !== undefined) {
         arrivals[drawIndex] = { image, position, id: card.id };
+      } else if (draw && from) {
+        // Keep the old overlap order and positions until the first draw begins,
+        // including any delay for the opponent's play or a stock reshuffle.
+        move(from, position, 0);
+        drawShifts.push(t => {
+          if (image.depth !== depth) {
+            image.setDepth(depth);
+            this.priorHandDepths.set(card.id, depth);
+          }
+          move(from, position, t);
+        });
       } else if ((motion || stagingChanged) && from && !samePosition(from, position)) {
         move(from, position, 0);
         const duration = motion ? Math.min(HAND_DRAW, ready.start) : STAGE_FLIGHT;
-        this.tween(duration, t => move(from, position, t), undefined, draw?.cardStarts[0] ?? draw?.start);
+        this.tween(duration, t => move(from, position, t));
       }
       const shade = (value: number) => {
         image.setPaperShade(value);
@@ -578,7 +596,14 @@ export class CardTable extends Phaser.Scene {
         shade(targetShade);
       }
     }
-    if (draw) this.animateDraws(arrivals, stock, draw);
+    if (draw) {
+      // Change all existing card depths together in the same frame as their motion.
+      if (drawShifts.length) {
+        this.tween(Math.min(HAND_DRAW, ready.start),
+          t => drawShifts.forEach(shift => shift(t)), undefined, draw.cardStarts[0] ?? draw.start);
+      }
+      this.animateDraws(arrivals, stock, draw);
+    }
   }
 
   private animateDraws(arrivals: Arrival[], stock: CardPosition, draw: DrawTimeline): void {
