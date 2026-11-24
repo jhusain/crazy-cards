@@ -28,22 +28,34 @@ export class CountdownFeedback {
   tick(): void {
     if (document.hidden) return;
     if (this.sound && this.context?.state === "running") {
-      const now=this.context.currentTime, oscillator=this.context.createOscillator(), gain=this.context.createGain();
-      oscillator.type="triangle"; oscillator.frequency.setValueAtTime(1200,now);
-      oscillator.frequency.exponentialRampToValueAtTime(650,now+.035);
-      gain.gain.setValueAtTime(.0001,now); gain.gain.exponentialRampToValueAtTime(.12,now+.002);
-      gain.gain.exponentialRampToValueAtTime(.0001,now+.045);
-      oscillator.connect(gain).connect(this.context.destination);
-      oscillator.start(now); oscillator.stop(now+.05);
-      oscillator.onended=()=>{oscillator.disconnect();gain.disconnect();};
+      const context = this.context;
+      const now = context.currentTime;
+      // A short, filtered noise impulse resembles a mechanical clock escapement.
+      const duration = .024;
+      const buffer = context.createBuffer(1, Math.ceil(context.sampleRate * duration), context.sampleRate);
+      const samples = buffer.getChannelData(0);
+      for (let i = 0; i < samples.length; i++) samples[i] = Math.random() * 2 - 1;
+      const click = context.createBufferSource();
+      click.buffer = buffer;
+      const filter = context.createBiquadFilter();
+      filter.type = "bandpass";
+      filter.frequency.value = 2600;
+      filter.Q.value = .9;
+      const gain = context.createGain();
+      gain.gain.setValueAtTime(.0001, now);
+      gain.gain.exponentialRampToValueAtTime(.25, now + .001);
+      gain.gain.exponentialRampToValueAtTime(.0001, now + duration);
+      click.connect(filter).connect(gain).connect(context.destination);
+      click.onended = () => { click.disconnect(); filter.disconnect(); gain.disconnect(); };
+      click.start(now);
     } else if (this.vibration && !this.sound) this.vibrate();
   }
   private vibrate(): void {
     let message: string;
     try {
       if (typeof navigator.vibrate !== "function") message = "Vibration API unavailable";
-      else if (!navigator.vibrate(150)) message = `Vibration rejected (user activation: ${navigator.userActivation?.hasBeenActive ?? "unknown"})`;
-      else message = "Vibration request accepted (150 ms)";
+      else if (!navigator.vibrate(25)) message = `Vibration rejected (user activation: ${navigator.userActivation?.hasBeenActive ?? "unknown"})`;
+      else message = "Vibration request accepted (25 ms)";
     } catch (error) {
       message = `Vibration error: ${error instanceof Error ? error.message : String(error)}`;
     }
@@ -52,16 +64,24 @@ export class CountdownFeedback {
   bling(): void {
     if (!this.sound || document.hidden || this.context?.state !== "running") return;
     const now = this.context.currentTime;
-    // Two quiet sine partials give a brief bell-like sparkle, without samples.
-    for (const [frequency,level] of [[1318.5,.07],[1977.8,.035]]) {
-      const tone=this.context.createOscillator(), gain=this.context.createGain();
-      tone.type="sine";tone.frequency.setValueAtTime(frequency!,now);
-      gain.gain.setValueAtTime(.0001,now);
-      gain.gain.exponentialRampToValueAtTime(level!,now+.003);
-      gain.gain.exponentialRampToValueAtTime(.0001,now+.075);
+    // Bright bell partials ring briefly, with the higher overtones fading first.
+    const partials = [
+      { frequency: 1568, level: .10, decay: .16 },
+      { frequency: 3136, level: .055, decay: .095 },
+      { frequency: 4704, level: .025, decay: .05 },
+    ];
+    for (const { frequency, level, decay } of partials) {
+      const tone = this.context.createOscillator();
+      const gain = this.context.createGain();
+      tone.type = "sine";
+      tone.frequency.setValueAtTime(frequency, now);
+      gain.gain.setValueAtTime(.0001, now);
+      gain.gain.exponentialRampToValueAtTime(level, now + .002);
+      gain.gain.exponentialRampToValueAtTime(.0001, now + decay);
       tone.connect(gain).connect(this.context.destination);
-      tone.start(now);tone.stop(now+.08);
-      tone.onended=()=>{tone.disconnect();gain.disconnect();};
+      tone.onended = () => { tone.disconnect(); gain.disconnect(); };
+      tone.start(now);
+      tone.stop(now + decay);
     }
   }
   setup(): void {
