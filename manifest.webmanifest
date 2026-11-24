@@ -1,0 +1,26 @@
+{
+  "id": "./",
+  "name": "Crazy Eights",
+  "short_name": "Crazy Eights",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#112e23",
+  "theme_color": "#151c19",
+  "description": "Play Crazy Eights against the computer, online or offline.",
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
