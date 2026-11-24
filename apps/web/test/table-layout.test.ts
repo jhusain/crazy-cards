@@ -328,7 +328,7 @@ test("overlapping rows achieve the target width while every face and suit stays 
  assert(last.y+cornerHeight(last)<=740-30+.001);
 });
 
-test("narrow screens explore non-greedy partitions while tablets prefer the widest row", () => {
+test("narrow screens explore non-greedy partitions while tablets use a single row", () => {
   const cards = [8, 12, 12, 10, 10, 5, 5].map(rank => ({ rank }));
   const { layout, hand } = planTableLayout(800, 1050, { cards, target: 240, keepGroups: true });
   assert.deepEqual(hand.rows.map(row => row.length), [7]);
@@ -403,9 +403,27 @@ test("three cards stay in one row and the three zones spread into available vert
   }
 });
 
-test("widest row wins even when a narrower partition has the same row count", () => {
-  const cards = [1, 1, 2, 2, 3, 3, 3].map(rank => ({rank}));
-  const { hand } = planTableLayout(390, 1000, { cards, target: 240, keepGroups: true });
-  close(hand.width, 240);
-  assert.deepEqual(hand.rows.map(row => row.length), [2, 5]);
+
+test("the hand uses the fewest rows that preserve the target width", () => {
+  const cards = Array.from({ length: 8 }, (_, rank) => ({ rank }));
+  for (const keepGroups of [true, false]) {
+    const plan = (target: number) => planTableLayout(390, 1000, { cards, target, keepGroups }).hand;
+    const large = plan(240);
+    close(large.width, 240);
+    assert.equal(large.rows.length, 2);
+    const small = plan(150);
+    close(small.width, 150);
+    assert.deepEqual(small.rows, [cards]);
+  }
+});
+
+test("a wider row does not justify a third row at the same card width", () => {
+  const cards = [1, 2, 1, 2, 2, 1].flatMap((count, rank) => Array.from({ length: count }, () => ({ rank })));
+  const plan = (target: number) => planTableLayout(540, 1340, { cards, target, keepGroups: true }).hand;
+  const large = plan(240);
+  close(large.width, 240);
+  assert.deepEqual(large.rows.map(row => row.length), [4, 5]);
+  const small = plan(190);
+  close(small.width, 190);
+  assert.deepEqual(small.rows, [cards]);
 });
