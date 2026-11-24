@@ -1,4 +1,4 @@
-const CACHE="crazy-eights-50762ec8c7e9065d";
+const CACHE="crazy-eights-9041584654a80ff3";
 const SHELL=["./","./index.html","./manifest.webmanifest","./icons/icon-192.png","./icons/icon-512.png"];
 self.addEventListener("install",event=>event.waitUntil((async()=>{
   const cache=await caches.open(CACHE);
