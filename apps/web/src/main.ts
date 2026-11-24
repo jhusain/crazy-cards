@@ -483,6 +483,14 @@ async function replayOpponent(): Promise<void> {
   }
 }
 
+function dismissStartup(): boolean {
+  const splash = document.getElementById("startup-screen");
+  if (!splash) return false;
+  splash.remove();
+  element("game-cabinet").inert = false;
+  return true;
+}
+
 function receive(response: Response): void {
   const acknowledged = response.requestId !== undefined && response.requestId === busy;
   const command = acknowledged ? pendingCommand : undefined;
@@ -518,6 +526,11 @@ function receive(response: Response): void {
   }
   message = response.type === "error" ? response.message : undefined;
   render(changed);
+  if (document.getElementById("startup-screen")) {
+    requestAnimationFrame(() => {
+      if (dismissStartup()) feedback.setup();
+    });
+  }
   if (!animationTimer) startAutomaticAction();
 }
 
@@ -739,7 +752,6 @@ function setupDebug(): void {
 async function start(): Promise<void> {
   setupDialogs();
   setupSettings();
-  feedback.setup();
   setupPwa();
   setupDebug();
   if (debug) showDebugStatus();
@@ -775,6 +787,7 @@ async function start(): Promise<void> {
     cancelAutomaticAction();
     stockPile.disabled = true;
     discardPile.disabled = true;
+    dismissStartup();
     const error = "The game couldn’t continue. Reload to try again.";
     showNotice(error);
     status.textContent = error;
@@ -796,6 +809,7 @@ async function start(): Promise<void> {
 }
 
 void start().catch(error => {
+  dismissStartup();
   const message = "The table couldn’t load. Reload to try again.";
   showNotice(message);
   status.textContent = message;

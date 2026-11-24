@@ -9,8 +9,14 @@ const css = page.match(/<link rel="stylesheet"[^>]* href="([^"]+)">/);
 if (!javascript || !css) throw new Error("Vite did not emit the expected static assets");
 const bundle = await readFile(new URL(javascript[1], output), "utf8");
 const stylesheet = await readFile(new URL(css[1], output), "utf8");
-page = page.replace(javascript[0], () => `<script type="module">${bundle.replaceAll(/<\/script/gi, "<\\/script")}</script>`);
+page = page.replace(javascript[0], "");
+page = page.replace("</body>", () => `<script type="module">${bundle.replaceAll(/<\/script/gi, "<\\/script")}</script>\n</body>`);
 page = page.replace(css[0], () => `<style>${stylesheet}</style>`);
+// Inline the startup logo before the module runs, including in standalone HTML.
+const logo = await readFile(new URL("branding/splash.webp", output));
+const logoSource = 'src="./branding/splash.webp"';
+if (!page.includes(logoSource)) throw new Error("Startup logo missing from HTML");
+page = page.replace(logoSource, `src="data:image/webp;base64,${logo.toString("base64")}"`);
 await writeFile(index, page);
 const assets = new URL("assets/", output);
 for (const filename of await readdir(assets)) {
@@ -24,9 +30,14 @@ await rm(assets, { recursive: true });
 // A versioned application shell is generated after inlining, so offline installs
 // always cache the exact same bundle that was published.
 const { createHash } = await import("node:crypto");
-const version = createHash("sha256").update(page).digest("hex").slice(0,16);
+const manifestText = await readFile(new URL("manifest.webmanifest", output), "utf8");
+const manifest = JSON.parse(manifestText);
+const shell = ["./", "./index.html", "./manifest.webmanifest", ...manifest.icons.map(icon => "./" + icon.src)];
+const hash = createHash("sha256").update(page).update(manifestText);
+for (const icon of manifest.icons) hash.update(await readFile(new URL(icon.src, output)));
+const version = hash.digest("hex").slice(0,16);
 const sw = `const CACHE="crazy-eights-${version}";
-const SHELL=["./","./index.html","./manifest.webmanifest","./icons/icon-192.png","./icons/icon-512.png"];
+const SHELL=${JSON.stringify(shell)};
 self.addEventListener("install",event=>event.waitUntil((async()=>{
   const cache=await caches.open(CACHE);
   for(const path of SHELL){const response=await fetch(path,{cache:"reload"});
