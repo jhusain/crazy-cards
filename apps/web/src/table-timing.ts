@@ -59,8 +59,12 @@ export function playPhases(queued: boolean, restoring: boolean, wild = false, bu
 
 export function playReflow(view: TableView) {
   if (view.event?.kind !== "play") return undefined;
-  const start = playDuration(view);
-  return { start, end: start + STAGE_FLIGHT };
+  const landing = playDuration(view);
+  const pending = view.queuedCards.length > 0;
+  // Only the local player's play can leave the piles displaced by staging.
+  const returnDuration = !pending && view.event.seat === view.seat ? PLAY_SLIDE : 0;
+  const start = landing + returnDuration;
+  return { landing, start, end: pending ? start : start + STAGE_FLIGHT };
 }
 
 export interface TableTiming extends GameSettings {

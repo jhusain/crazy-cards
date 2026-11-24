@@ -3,7 +3,7 @@ import test from "node:test";
 import { SUITS, wildSuitOptions } from "@crazy-eights/protocol";
 import { suitInk, wildReelStop, wildReel, wildReelFrame, wildReelInk } from "../src/wild-reel.ts";
 import { GameServer } from "@crazy-eights/game-server";
-import { PLAY_FLIGHT, PLAY_TIME, STAGE_FLIGHT, HAND_READY, playPhases, playDuration, handReadinessTimeline, tableAnimationTime } from "../src/table-timing.ts";
+import { PLAY_FLIGHT, PLAY_TIME, PLAY_SLIDE, STAGE_FLIGHT, HAND_READY, playPhases, playDuration, handReadinessTimeline, tableAnimationTime } from "../src/table-timing.ts";
 
 test("wild reels start with the printed suit, end with the call and never repeat adjacent stops", () => {
   for (const first of SUITS) for (const last of SUITS) for (const random of [0, .3, .7, .999]) {
@@ -133,8 +133,8 @@ test("wild-on-wild burns for one normal play duration before the incoming slide"
   view.event = { kind: "play", seat: 0, burnsPreviousPlay: true,
     cards: [{ id: 7, rank: 8, suit: "clubs", special: "wild", calledSuit: "hearts" }] };
   assert.equal(playDuration(view), PLAY_TIME * 2);
-  assert.equal(handReadinessTimeline(view).start, PLAY_TIME * 2 + STAGE_FLIGHT);
-  assert.equal(tableAnimationTime(view, 1, true), PLAY_TIME * 2 + STAGE_FLIGHT + HAND_READY + 48);
+  assert.equal(handReadinessTimeline(view).start, PLAY_TIME * 2 + PLAY_SLIDE + STAGE_FLIGHT);
+  assert.equal(tableAnimationTime(view, 1, true), PLAY_TIME * 2 + PLAY_SLIDE + STAGE_FLIGHT + HAND_READY + 48);
   view.event.seat = 1;
   assert.equal(playDuration(view), playPhases(false, false, true).total + PLAY_TIME);
 });

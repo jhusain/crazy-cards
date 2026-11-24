@@ -179,7 +179,7 @@ export class CardTable extends Phaser.Scene {
         this.scale.resize(pixelWidth, pixelHeight);
       }
       this.cameras.main.setZoom(pixelWidth / width, pixelHeight / height);
-      const { layout, hand: plan } = planTableLayout(width, height, {
+      const { layout: plannedLayout, hand: plan } = planTableLayout(width, height, {
         cards, target: targetCardWidth, keepGroups: this.state?.keepGroupsTogether ?? true,
         stockCount: view?.stockCount, discardCount: view?.visibleDiscard.length,
         playCount: staged.length, playCapacity: this.state?.playCapacity,
@@ -187,6 +187,18 @@ export class CardTable extends Phaser.Scene {
         heldLayout: this.priorLayout,
       });
       const priorLayout = this.priorLayout;
+      const frozen = queued.length && priorLayout?.tableWidth === width && priorLayout.tableHeight === height
+        ? priorLayout : undefined;
+      // A queue prefix changes the discard's contents, but the remaining
+      // staged cards and both hands retain their actual on-screen slots.
+      const layout = frozen ? {
+        ...frozen,
+        piles: {
+          stock: frozen.piles.stock,
+          discard: collapsePlayPositions(frozen.piles.discard[0]!, view!.visibleDiscard.length),
+          play: staged.map((card, index) => this.priorCardPositions.get(card.id) ?? plannedLayout.piles.play[index]!),
+        },
+      } : plannedLayout;
       this.priorLayout = layout;
       const motion = animate && previous?.view.revision !== view?.revision;
       const priorRound = previous?.view.round === view?.round && view?.event !== null ? previous?.view : undefined;
@@ -196,7 +208,11 @@ export class CardTable extends Phaser.Scene {
         frame(0);
         reflowFrames.push(frame);
       } : undefined;
-      const handSlots = plan.positions;
+      const returnFrames: ReflowFrame[] = [];
+      const registerReturn: RegisterReflow | undefined = reflow && reflow.start > reflow.landing
+        ? frame => returnFrames.push(frame) : undefined;
+      const handSlots = frozen ? cards.map((card, index) =>
+        this.priorCardPositions.get(card.id) ?? plan.positions[index]!) : plan.positions;
       const largestCard = Math.max(layout.pileWidth, ...handSlots.map(position => position.width));
       const textureDensity = Math.min(Math.floor(4096 / ART_HEIGHT),
         Math.ceil(this.density * Math.max(1, largestCard / ART_WIDTH)));
@@ -258,9 +274,9 @@ export class CardTable extends Phaser.Scene {
       const stockDraw = reshuffling || (reflow && draw.count + opponentDraw.count > 0)
         ? (opponentDraw.count ? opponentDraw : draw) : undefined;
       this.drawStock(stock, view.stockCount, backTexture, layout, adjusting,
-        stockDraw, view.event?.kind === "shuffle" ? 0 : previous?.view.stockCount, back, registerReflow, original);
+        stockDraw, view.event?.kind === "shuffle" ? 0 : previous?.view.stockCount, back, registerReflow, original, registerReturn);
       this.drawDiscard(view, layout, stock, priorPositions, oldEnemy, adjusting, phases,
-        motion && priorRound ? previous : undefined, registerReflow);
+        motion && priorRound ? previous : undefined, registerReflow, registerReturn);
       this.drawOpponent(enemy, backTexture, stock, opponentDraw, initialDeal, opponentPlayed, oldEnemy, registerReflow);
 
       const stagedTargets = layout.piles.play.map((position, index) => {
@@ -298,7 +314,10 @@ export class CardTable extends Phaser.Scene {
       const movingDraw = motion && !!priorRound && draw.count > 0;
       this.drawHand(handTargets, buttons, view, stock, priorPositions, priorShades, motion, adjusting, initialDeal,
         movingDraw ? draw : undefined, registerReflow);
-      if (reflow) {
+      if (reflow && returnFrames.length) {
+        this.tween(reflow.start - reflow.landing, t => returnFrames.forEach(frame => frame(t)), undefined, reflow.landing);
+      }
+      if (reflow && reflow.end > reflow.start) {
         this.tween(reflow.end - reflow.start, t => reflowFrames.forEach(frame => frame(t)), undefined, reflow.start);
       }
       if (reshuffling || reflow) {
@@ -345,7 +364,7 @@ export class CardTable extends Phaser.Scene {
   private drawStock(
     deck: CardPosition, count: number, texture: string, layout: Layout, adjusting: boolean,
     draw: DrawTimeline | undefined, beforeCount = count, back = 0,
-    reflow?: RegisterReflow, original = layout,
+    reflow?: RegisterReflow, original = layout, returnPiles?: RegisterReflow,
   ): void {
     const visible = draw || reflow ? 4 : stockLayerCount(count);
     const images: CardImage[] = [];
@@ -365,7 +384,9 @@ export class CardTable extends Phaser.Scene {
     };
     const from = this.priorStockPosition;
     if (from && reflow) {
-      reflow(t => place(between(from, deck, t), draw || t === 0 ? beforeCount : count,
+      const home = returnPiles ? { ...from, x: deck.x } : from;
+      returnPiles?.(t => place(between(from, home, t), beforeCount, original.stockLayerStep));
+      reflow(t => place(t === 0 ? from : between(home, deck, t), draw || t === 0 ? beforeCount : count,
         lerp(original.stockLayerStep, layout.stockLayerStep, t)));
     } else {
       place(from && adjusting ? from : deck);
@@ -452,6 +473,7 @@ export class CardTable extends Phaser.Scene {
     view: TableView, layout: Layout, stock: CardPosition,
     previousPositions: Map<number, CardPosition>, opponent: CardPosition[] | undefined,
     adjusting: boolean, phases: PlayPhases | undefined, previous?: BoardState, reflow?: RegisterReflow,
+    returnPiles?: RegisterReflow,
   ): void {
     const width = layout.tableWidth;
     const last = view.visibleDiscard;
@@ -565,12 +587,14 @@ export class CardTable extends Phaser.Scene {
       incoming.forEach(({ image }, index) => image.setDepth(CARD_DEPTH.discard + index));
       if (reflow) placeTarget(collapsedPositions[0]!, collapsedPositions.at(-1)!);
     }, 0, "Linear");
-    if (reflow) reflow(t => {
-      // The landing tween owns these cards until it reaches the discard.
-      if (t === 0) return;
-      for (const { image, collapsed, target, id } of incoming) this.moveCard(image, collapsed, target, t, id);
-      placeTarget(between(collapsedPositions[0]!, firstTarget, t), between(collapsedPositions.at(-1)!, lastTarget, t));
-    });
+    const home = returnPiles ? collapsePlayPositions({ ...anchor, x: firstTarget.x }, last.length) : collapsedPositions;
+    const movePile = (from: CardPosition[], to: CardPosition[], progress: number) => {
+      if (progress === 0) return;
+      incoming.forEach(({ image, id }, index) => this.moveCard(image, from[index]!, to[index]!, progress, id));
+      placeTarget(between(from[0]!, to[0]!, progress), between(from.at(-1)!, to.at(-1)!, progress));
+    };
+    returnPiles?.(t => movePile(collapsedPositions, home, t));
+    reflow?.(t => movePile(home, targets, t));
   }
 
   private drawWildBurn(graphics: Phaser.GameObjects.Graphics, positions: CardPosition[], progress: number): void {

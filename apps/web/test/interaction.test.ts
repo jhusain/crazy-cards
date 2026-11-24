@@ -6,7 +6,7 @@ import { flickPlay, isUpwardFlick, isVerticalFlick, orderFlickGroup, queuedCardF
 import { OpponentReplay } from "../src/opponent-replay.ts";
 import { isDebug } from "../src/play-mode.ts";
 import { ANIMATION_SPEEDS, DEFAULT_SETTINGS, readSettings } from "../src/settings.ts";
-import { drawTimeline, HAND_READY, PLAY_TIME, STAGE_FLIGHT, playReflow, handReadinessTimeline, replayDelay, replaySpeed, tableAnimationTime } from "../src/table-timing.ts";
+import { drawTimeline, HAND_READY, PLAY_TIME, PLAY_SLIDE, STAGE_FLIGHT, playReflow, handReadinessTimeline, replayDelay, replaySpeed, tableAnimationTime } from "../src/table-timing.ts";
 
 test("debug mode requires the debug query value to be exactly true", () => {
   assert(isDebug("?debug=true"));
@@ -148,19 +148,20 @@ test("pickups run after the play, revealing each player card before its own flig
   const playerDraw = drawTimeline(player, 0);
   const opponentDraw = drawTimeline(opponent, 1);
   const reflow = playReflow(player)!;
-  assert.deepEqual(reflow, { start: PLAY_TIME, end: PLAY_TIME + STAGE_FLIGHT });
+  assert.deepEqual(reflow, { landing: PLAY_TIME, start: PLAY_TIME, end: PLAY_TIME + STAGE_FLIGHT });
   assert.equal(playerDraw.start, reflow.end);
   assert.equal(playerDraw.cardStarts[0], reflow.end);
   assert(playerDraw.reveal > 0);
   assert.equal(playerDraw.total, reflow.end + 2 * (playerDraw.reveal + playerDraw.duration));
-  assert.equal(opponentDraw.start, reflow.end);
+  assert.equal(opponentDraw.start, reflow.end + PLAY_SLIDE);
+  assert.equal(opponentDraw.cardStarts[0], opponentDraw.start);
   assert.equal(opponentDraw.reveal, 0);
-  assert.equal(opponentDraw.total, reflow.end + 5 * opponentDraw.duration);
+  assert.equal(opponentDraw.total, opponentDraw.start + 5 * opponentDraw.duration);
   assert.equal(tableAnimationTime(player, 1, true), playerDraw.total + 48);
   assert.equal(tableAnimationTime(opponent, 1, true), opponentDraw.total + 48);
   assert.equal(drawTimeline(player, 1).total, 0);
   assert.equal(drawTimeline({ ...initial, event: { kind: "draw", seat: 0, drawCount: 1 } }, 0).start, 0);
-  assert.equal(tableAnimationTime({ ...player, event: { kind: "play", seat: 0 } }, 1, true), PLAY_TIME + STAGE_FLIGHT + 48);
+  assert.equal(tableAnimationTime({ ...player, event: { kind: "play", seat: 0 } }, 1, true), PLAY_TIME + PLAY_SLIDE + STAGE_FLIGHT + 48);
 });
 
 test("hand contrast settles only after the play and every pickup animation has finished", () => {
@@ -168,7 +169,7 @@ test("hand contrast settles only after the play and every pickup animation has f
   const play: TableView = { ...ready, event: { kind: "play", seat: 1 } };
   assert.deepEqual(handReadinessTimeline(play), { start: PLAY_TIME + STAGE_FLIGHT, duration: HAND_READY });
   const skip: TableView = { ...ready, event: { kind: "play", seat: 0, skips: true } };
-  assert.deepEqual(handReadinessTimeline(skip), { start: PLAY_TIME + STAGE_FLIGHT, duration: HAND_READY });
+  assert.deepEqual(handReadinessTimeline(skip), { start: PLAY_TIME + PLAY_SLIDE + STAGE_FLIGHT, duration: HAND_READY });
   const penalty: TableView = { ...play, event: { kind: "play", seat: 1, penalty: { seat: 0, count: 5 } } };
   assert.deepEqual(handReadinessTimeline(penalty), { start: drawTimeline(penalty, 0).total, duration: HAND_READY });
   const draw: TableView = { ...ready, event: { kind: "draw", seat: 0, drawCount: 1 } };
@@ -237,4 +238,19 @@ test("automatic action preferences default off, persist, and migrate the earlier
   }
   assert.equal(readSettings({autoPassDelayMs:5000}).automaticDelayMs,5000);
   assert.equal(readSettings({autoPassDelayMs:5000,automaticDelayMs:2000}).automaticDelayMs,2000);
+});
+
+test("queued skip prefixes end at landing and the final pickup waits for pile return and reflow", () => {
+  const view: TableView = { ...new GameServer().view(0), turn: 0, queuedCards: [7],
+    event: { kind: "play", seat: 0, skips: true } };
+  assert.deepEqual(playReflow(view), { landing: PLAY_TIME, start: PLAY_TIME, end: PLAY_TIME });
+  assert.deepEqual(handReadinessTimeline(view), { start: PLAY_TIME, duration: 0 });
+
+  const final: TableView = { ...view, turn: 1, queuedCards: [],
+    event: { kind: "play", seat: 0, penalty: { seat: 1, count: 2 } } };
+  const reflow = playReflow(final)!;
+  assert.deepEqual(reflow, { landing: PLAY_TIME, start: PLAY_TIME + PLAY_SLIDE,
+    end: PLAY_TIME + PLAY_SLIDE + STAGE_FLIGHT });
+  const draw = drawTimeline(final, 1);
+  assert.deepEqual(draw.cardStarts, [reflow.end, reflow.end + draw.duration]);
 });
