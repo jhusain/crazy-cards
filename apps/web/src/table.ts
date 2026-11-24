@@ -241,7 +241,7 @@ export class CardTable extends Phaser.Scene {
       const appendedStock = playing ? this.priorStockPosition ?? stock : undefined;
       const collapseAnchor = playing ? priorPositions.get(priorRound.visibleDiscard[0]!.id) : undefined;
       const phases = appendedStock ? playPhases(stagedCommit,
-        !samePosition(appendedStock, stock) || !samePosition(collapseAnchor, layout.piles.discard[0]!), opponentWildPlay(view)) : undefined;
+        !samePosition(appendedStock, stock) || !samePosition(collapseAnchor, layout.piles.discard[0]!), opponentWildPlay(view), view.event?.burnsPreviousPlay) : undefined;
       const drawingSeat = view.event?.kind === "draw" ? view.event.seat : view.event?.penalty?.seat ?? view.seat;
       const shuffleDraw = reshuffling ? drawTimeline(view, drawingSeat) : undefined;
       this.drawStock(stock, view.stockCount, backTexture, layout, adjusting, appendedStock, phases,
@@ -471,7 +471,8 @@ export class CardTable extends Phaser.Scene {
     const playerPlayed = view.event!.seat === view.seat;
     const alreadyQueued = playerPlayed && committedFromPlay(last, previous);
     const outgoingTargets = prior;
-    const timing = phases ?? playPhases(alreadyQueued, false, opponentWildPlay(view));
+    const timing = phases ?? playPhases(alreadyQueued, false, opponentWildPlay(view), view.event!.burnsPreviousPlay);
+    const fire = timing.burnStart !== null ? this.add.graphics().setDepth(CARD_DEPTH.stock - 1) : undefined;
     const anchor = outgoingTargets[0]!;
     const collapsedPositions = collapsePlayPositions(anchor, last.length);
     const incoming = last.map((card, index) => {
@@ -515,21 +516,84 @@ export class CardTable extends Phaser.Scene {
       }
       const slide = ease(unit((elapsed - timing.collapseStart) / (timing.collapseEnd - timing.collapseStart)));
       const restore = ease(unit((elapsed - timing.returnStart) / Math.max(1, timing.total - timing.returnStart)));
-      outgoing.forEach((image, index) => {
-        const start = outgoingTargets[index]!;
-        const collapsed = { ...start, x: anchor.x };
-        this.placeImage(image, elapsed < timing.returnStart ? { ...start, x: lerp(start.x, anchor.x, slide) }
-          : between(collapsed, targets[0]!, restore));
-      });
+      if (fire && timing.burnStart !== null) {
+        const burn = unit((elapsed - timing.burnStart) / PLAY_TIME);
+        if (elapsed >= timing.burnStart) {
+          // The old play stays in place as its cards disappear into the flame and smoke.
+          outgoing.forEach(image => {
+            image.setPaperShade(unit(burn * 3));
+            image.setAlpha(1 - ease(unit((burn - .12) / .62)));
+          });
+          this.drawWildBurn(fire, prior, burn);
+        }
+      } else {
+        outgoing.forEach((image, index) => {
+          const start = outgoingTargets[index]!;
+          const collapsed = { ...start, x: anchor.x };
+          this.placeImage(image, elapsed < timing.returnStart ? { ...start, x: lerp(start.x, anchor.x, slide) }
+            : between(collapsed, targets[0]!, restore));
+        });
+      }
       incoming.forEach(({ image, appended, collapsed, target, id }) =>
         elapsed < timing.returnStart ? this.moveCard(image, appended, collapsed, slide, id) :
           this.moveCard(image, collapsed, target, restore, id));
     }, () => {
       delete this.board.dataset.wildReel;
       delete this.board.dataset.wildPhase;
+      fire?.destroy();
       outgoing.forEach(image => image.destroy());
       incoming.forEach(({ image }, index) => image.setDepth(CARD_DEPTH.discard + index));
     }, 0, "Linear");
+  }
+
+  private drawWildBurn(graphics: Phaser.GameObjects.Graphics, positions: CardPosition[], progress: number): void {
+    graphics.clear();
+    if (progress <= 0 || progress >= 1) return;
+    const first = positions[0]!;
+    const last = positions.at(-1)!;
+    const height = artHeight(first.width);
+    const width = last.x + last.width - first.x;
+    const size = first.width;
+    const columns = Math.max(5, Math.ceil(width / size * 6));
+
+    // Overlapping smoke puffs expand and drift upward, then disperse completely.
+    for (let i = 0; i < columns * 2; i++) {
+      const age = unit((progress - .12 - (i % 4) * .09) / (.88 - (i % 4) * .09));
+      if (age <= 0 || age >= 1) continue;
+      const x = first.x + width * ((i % columns + .5) / columns) + Math.sin(i * 2.4 + age * 2) * size * .24 * age;
+      const y = first.y + height * (.78 - age * 1.36);
+      const radius = size * (.10 + age * .24);
+      const opacity = Math.sin(Math.PI * age) * .48;
+      graphics.fillStyle(i % 2 ? 0x655b51 : 0x373732, opacity);
+      graphics.fillCircle(x, y, radius);
+      graphics.fillStyle(0x9a8e7c, opacity * .42);
+      graphics.fillCircle(x - radius * .23, y - radius * .20, radius * .68);
+    }
+
+    // A flickering front moves up the cards, leaving the final moments for smoke.
+    const intensity = Math.sin(Math.PI * unit(progress / .77));
+    if (intensity < .001) return;
+    const baseY = first.y + height * (1 - .84 * unit(progress / .68));
+    for (let i = 0; i < columns; i++) {
+      const x = first.x + width * (i + .5) / columns;
+      const flicker = .75 + .25 * Math.sin(i * 2.3 + progress * 54);
+      const flameHeight = size * (.24 + .63 * intensity) * flicker;
+      const radius = width / columns * (.52 + .14 * intensity);
+      const tip = x + Math.sin(i * 1.7 + progress * 36) * radius;
+      graphics.fillStyle(0xf04b12, intensity * .88);
+      graphics.fillEllipse(x, baseY - flameHeight * .23, radius * 2.15, flameHeight * .65);
+      graphics.fillTriangle(x - radius, baseY, x + radius, baseY, tip, baseY - flameHeight);
+      graphics.fillStyle(0xffb22d, intensity * .96);
+      graphics.fillEllipse(x, baseY - flameHeight * .18, radius * 1.28, flameHeight * .46);
+      graphics.fillTriangle(x - radius * .62, baseY, x + radius * .62, baseY, tip, baseY - flameHeight * .67);
+      graphics.fillStyle(0xfff3ab, intensity);
+      graphics.fillEllipse(x, baseY - flameHeight * .12, radius * .72, flameHeight * .29);
+
+      const spark = (progress * 3 + i * .19) % 1;
+      graphics.fillStyle(0xffc65b, intensity * (1 - spark));
+      graphics.fillCircle(x + Math.sin(i + spark * 5) * radius, baseY - flameHeight - spark * size * .4,
+        size * (.012 + .009 * (1 - spark)));
+    }
   }
 
   private drawHand(

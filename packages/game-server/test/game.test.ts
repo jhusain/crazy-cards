@@ -610,3 +610,25 @@ test("a new match is opened by the last round winner, even when the other player
     assert.deepEqual(reset.roundsWon,[0,0]);
   }
 });
+
+test("consecutive wild plays announce a burn to both players, including multiple eights", () => {
+  const heart = card(8, "hearts").id;
+  const club = card(8, "clubs").id;
+  const diamond = card(8, "diamonds").id;
+  const spade = card(8, "spades").id;
+  const ordinary = card(7, "clubs").id;
+  const server = rigged([heart, spade], [club, diamond, ordinary], card(3, "hearts").id);
+  const first = command(server, 0, { type: "play", cards: [heart], suit: "diamonds" });
+  assert.equal(first.type, "state");
+  assert.equal(first.view.event?.burnsPreviousPlay, undefined);
+  const second = command(server, 1, { type: "play", cards: [club, diamond], suit: "hearts" });
+  assert.equal(second.type, "state");
+  assert.equal(second.view.event?.burnsPreviousPlay, true);
+  assert.equal(server.view(0).event?.burnsPreviousPlay, true);
+  const third = command(server, 0, { type: "play", cards: [spade], suit: "clubs" });
+  assert.equal(third.type, "state");
+  assert.equal(third.view.event?.burnsPreviousPlay, true);
+  const fourth = command(server, 1, { type: "play", cards: [ordinary] });
+  assert.equal(fourth.type, "state");
+  assert.equal(fourth.view.event?.burnsPreviousPlay, undefined);
+});

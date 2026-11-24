@@ -25,10 +25,12 @@ export function opponentWildPlay(view: TableView): boolean {
 }
 
 export function playDuration(view: TableView): number {
-  return opponentWildPlay(view) ? Math.max(playPhases(false, false, true).total, playPhases(false, true, true).total) : PLAY_TIME;
+  const wild = opponentWildPlay(view);
+  const burn = view.event?.burnsPreviousPlay === true;
+  return Math.max(playPhases(false, false, wild, burn).total, playPhases(false, true, wild, burn).total);
 }
 
-export function playPhases(queued: boolean, restoring: boolean, wild = false) {
+export function playPhases(queued: boolean, restoring: boolean, wild = false, burn = false) {
   const returnStart = restoring ? PLAY_FLIGHT + PLAY_HOLD : PLAY_TIME;
   const normal = {
     flight: queued ? 0 : PLAY_FLIGHT,
@@ -37,15 +39,22 @@ export function playPhases(queued: boolean, restoring: boolean, wild = false) {
     returnStart,
     total: PLAY_TIME,
     reelEnd: 0,
+    burnStart: null as number | null,
   };
+  let phases = normal;
   if (wild) {
     const reelEnd = PLAY_TIME * 23 / 10;
     const collapseStart = reelEnd + PLAY_TIME / 5;
     const extra = collapseStart - normal.collapseStart;
-    return { flight: normal.flight, collapseStart, collapseEnd: normal.collapseEnd + extra,
+    phases = { ...normal, collapseStart, collapseEnd: normal.collapseEnd + extra,
       returnStart: normal.returnStart + extra, total: normal.total + extra, reelEnd };
   }
-  return normal;
+  if (burn) {
+    return { ...phases, burnStart: phases.collapseStart,
+      collapseStart: phases.collapseStart + PLAY_TIME, collapseEnd: phases.collapseEnd + PLAY_TIME,
+      returnStart: phases.returnStart + PLAY_TIME, total: phases.total + PLAY_TIME };
+  }
+  return phases;
 }
 
 export interface TableTiming extends GameSettings {

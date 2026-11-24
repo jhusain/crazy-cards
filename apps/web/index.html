@@ -9,27 +9,9 @@
     <meta name="theme-color" content="#151c19">
     <meta name="description" content="Play the original Crazy Eights computer opponent at a touch-first card table.">
     <title>Crazy Eights</title>
-    <style>
-      #startup-screen {
-        position: fixed;
-        inset: 0;
-        z-index: 10000;
-        display: grid;
-        place-items: center;
-        background: #0c2f22;
-      }
-      #startup-screen img {
-        display: block;
-        width: min(94vw, 76vh, 620px);
-        height: auto;
-      }
-    </style>
   </head>
   <body>
-    <div id="startup-screen" role="status" aria-label="Loading Crazy Eights">
-      <img src="/branding/splash.webp" alt="">
-    </div>
-    <main class="cabinet" id="game-cabinet" inert>
+    <main class="cabinet">
       <header class="titlebar">
         <button class="menu-toggle" id="menu-toggle" aria-label="Game menu" popovertarget="game-menu">
           <span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span>

@@ -12,11 +12,6 @@ const stylesheet = await readFile(new URL(css[1], output), "utf8");
 page = page.replace(javascript[0], "");
 page = page.replace("</body>", () => `<script type="module">${bundle.replaceAll(/<\/script/gi, "<\\/script")}</script>\n</body>`);
 page = page.replace(css[0], () => `<style>${stylesheet}</style>`);
-// Inline the startup logo before the module runs, including in standalone HTML.
-const logo = await readFile(new URL("branding/splash.webp", output));
-const logoSource = 'src="./branding/splash.webp"';
-if (!page.includes(logoSource)) throw new Error("Startup logo missing from HTML");
-page = page.replace(logoSource, `src="data:image/webp;base64,${logo.toString("base64")}"`);
 await writeFile(index, page);
 const assets = new URL("assets/", output);
 for (const filename of await readdir(assets)) {

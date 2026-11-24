@@ -11,7 +11,6 @@ assert.equal(monochromePng[25],6,'Monochrome PNG must have an alpha channel');
 for(const icon of manifest.icons)assert((await readFile(new URL(icon.src,root))).length>100);
 const html=await readFile(new URL('index.html',root),'utf8');
 assert(html.includes('manifest.webmanifest'));
-assert(/<img src="data:image\/webp;base64,[^"]+" alt="">/.test(html),'Startup logo must be embedded');
 const handlers={}, stores=new Map();
 let offline=false;
 const base='https://game.test/';

@@ -309,6 +309,8 @@ export class GameServer {
 
     const played: PlayedCard[] = cards.map((card, index) =>
       suit && index === cards.length - 1 ? { ...card!, calledSuit: suit } : card!);
+    const burnsPreviousPlay = played.some(card => card.special === "wild") &&
+      this.lastPlay.slice(-this.lastPlaySize).some(card => card.special === "wild");
     this.hands[seat] = hand.filter(card => !ids.includes(card.id));
     this.lastPlaySize = played.length;
     this.passesWithoutProgress = 0;
@@ -334,7 +336,8 @@ export class GameServer {
     const pickup = penaltyCount ? this.drawCards(opponent, penaltyCount) : undefined;
     const drawnCards = pickup?.drawnCards;
     const penalty = drawnCards ? { seat: opponent, count: drawnCards.length } : undefined;
-    this.event = { seat, kind: "play", cards: played, skips, penalty, drawnCards, ...(pickup?.reshuffles.length ? { reshuffles: pickup.reshuffles } : {}) };
+    this.event = { seat, kind: "play", cards: played, skips, penalty, drawnCards,
+      ...(burnsPreviousPlay ? { burnsPreviousPlay: true } : {}), ...(pickup?.reshuffles.length ? { reshuffles: pickup.reshuffles } : {}) };
     this.advance(next);
   }
 

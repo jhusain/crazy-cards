@@ -113,3 +113,28 @@ test("suit chimes align with each new centered suit and never repeat during reco
  }
  for(let i=0;i<=100;i++)assert.equal(wildReelStop(reel,8/velocity+(1-8/velocity)*i/100),8);
 });
+
+test("wild-on-wild burns for one normal play duration before the incoming slide", () => {
+  for (const [queued, wild] of [[false, false], [true, false], [false, true]] as const) {
+    for (const restoring of [false, true]) {
+      const normal = playPhases(queued, restoring, wild);
+      const burn = playPhases(queued, restoring, wild, true);
+      assert.equal(normal.burnStart, null);
+      assert.equal(burn.burnStart, normal.collapseStart);
+      assert.equal(burn.collapseStart, burn.burnStart! + PLAY_TIME);
+      assert.equal(burn.collapseEnd - burn.collapseStart, normal.collapseEnd - normal.collapseStart);
+      assert.equal(burn.returnStart, normal.returnStart + PLAY_TIME);
+      assert.equal(burn.total, normal.total + PLAY_TIME);
+      assert.equal(burn.reelEnd, normal.reelEnd);
+    }
+  }
+  const view = new GameServer().view(0);
+  view.turn = 0;
+  view.event = { kind: "play", seat: 0, burnsPreviousPlay: true,
+    cards: [{ id: 7, rank: 8, suit: "clubs", special: "wild", calledSuit: "hearts" }] };
+  assert.equal(playDuration(view), PLAY_TIME * 2);
+  assert.equal(handReadinessTimeline(view).start, PLAY_TIME * 2);
+  assert.equal(tableAnimationTime(view, 1, true), PLAY_TIME * 2 + HAND_READY + 48);
+  view.event.seat = 1;
+  assert.equal(playDuration(view), playPhases(false, true, true).total + PLAY_TIME);
+});

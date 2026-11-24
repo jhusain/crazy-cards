@@ -40,6 +40,7 @@ export interface TurnEvent {
   seat: Seat;
   kind: "play" | "draw" | "pass" | "shuffle";
   cards?: PlayedCard[];
+  burnsPreviousPlay?: boolean;
   drawCount?: number;
   drawnCards?: number[];
   skips?: boolean;
