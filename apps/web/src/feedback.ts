@@ -1,6 +1,7 @@
 // Phone feedback is explicitly opt-in, then unlocked by a trusted tap.
 export class CountdownFeedback {
   private context?: AudioContext;
+  private fireSource?: AudioBufferSourceNode;
   sound = false;
   vibration = false;
   private readonly key = "crazy-eights-feedback";
@@ -84,6 +85,47 @@ export class CountdownFeedback {
       tone.stop(now + decay);
     }
   }
+  fireRumble(durationMs: number): void {
+    if (!this.sound || document.hidden || this.context?.state !== "running" || durationMs <= 0) return;
+    this.stopFireRumble();
+    const context = this.context;
+    const now = context.currentTime;
+    const duration = durationMs / 1000;
+    const buffer = context.createBuffer(1, context.sampleRate, context.sampleRate);
+    const samples = buffer.getChannelData(0);
+    for (let i = 0; i < samples.length; i++) samples[i] = Math.random() * 2 - 1;
+
+    // Broad, low-pitched noise swells with the flames and dies away with the smoke.
+    const source = context.createBufferSource();
+    source.buffer = buffer;
+    source.loop = true;
+    const filter = context.createBiquadFilter();
+    filter.type = "bandpass";
+    filter.frequency.value = 260;
+    filter.Q.value = .55;
+    const gain = context.createGain();
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(.65, now + duration * .18);
+    gain.gain.linearRampToValueAtTime(.32, now + duration * .55);
+    gain.gain.linearRampToValueAtTime(0, now + duration);
+    source.connect(filter).connect(gain).connect(context.destination);
+    source.onended = () => {
+      source.disconnect();
+      filter.disconnect();
+      gain.disconnect();
+      if (this.fireSource === source) this.fireSource = undefined;
+    };
+    this.fireSource = source;
+    source.start(now);
+    source.stop(now + duration);
+  }
+
+  stopFireRumble(): void {
+    const source = this.fireSource;
+    this.fireSource = undefined;
+    source?.stop();
+  }
+
   setup(): void {
     const sound=document.getElementById("sound-enabled") as HTMLInputElement;
     const vibration=document.getElementById("vibration-enabled") as HTMLInputElement;
@@ -91,13 +133,14 @@ export class CountdownFeedback {
     const sync=()=>{sound.checked=this.sound;vibration.checked=this.vibration;this.save();};
     const enable=()=>{this.sound=true;this.vibration=true;sync();void this.unlock().then(()=>this.tick());dialog.close();};
     sound.checked=this.sound;vibration.checked=this.vibration;
-    sound.onchange=()=>{this.sound=sound.checked;this.save();void this.unlock();};
+    sound.onchange=()=>{this.sound=sound.checked;if(!this.sound)this.stopFireRumble();this.save();void this.unlock();};
     vibration.onchange=()=>{this.vibration=vibration.checked;this.save();if(this.vibration&&!this.sound)this.tick();};
     document.getElementById("allow-feedback")!.onclick=enable;
     document.getElementById("decline-feedback")!.onclick=()=>{sync();dialog.close();};
     document.getElementById("enable-feedback")!.onclick=()=>dialog.showModal();
     document.addEventListener("pointerup",()=>void this.unlock(),{passive:true});
     document.addEventListener("keydown",()=>void this.unlock());
+    document.addEventListener("visibilitychange", () => { if (document.hidden) this.stopFireRumble(); });
     let saved=false;try{saved=localStorage.getItem(this.key)!==null;}catch{}
     if(!saved) dialog.showModal();
   }

@@ -42,6 +42,7 @@ type BoardState = {
 type Controls = {
   tapCard: (id: number) => void; flickCard: (id: number) => void;
   playQueue: () => void; clearPlay: () => void; ready: () => void; suitBling?: () => void;
+  fireRumble?: (durationMs: number) => void; stopFireRumble?: () => void;
 };
 type CardTarget = { card: Card; position: CardPosition; dimmed: boolean; staged: boolean; depth: number };
 type Arrival = { image: CardImage; position: CardPosition; id?: number };
@@ -111,6 +112,7 @@ export class CardTable extends Phaser.Scene {
     observer.observe(this.board);
     window.addEventListener("resize", resize);
     this.events.once("shutdown", () => {
+      this.controls.stopFireRumble?.();
       observer.disconnect();
       window.removeEventListener("resize", resize);
     });
@@ -136,6 +138,7 @@ export class CardTable extends Phaser.Scene {
     if (this.painting) return;
     this.painting = true;
     try {
+      this.controls.stopFireRumble?.();
       this.tweens.killAll();
       delete this.board.dataset.wildReel;
       delete this.board.dataset.wildPhase;
@@ -490,6 +493,7 @@ export class CardTable extends Phaser.Scene {
 
     let landed = false;
     let soundedStop = 0;
+    let fireSoundStarted = false;
     if (incoming.some(card => card.reel)) this.board.dataset.wildReel = String(last.at(-1)!.id);
     this.tween(timing.total, progress => {
       const elapsed = progress * timing.total;
@@ -519,6 +523,13 @@ export class CardTable extends Phaser.Scene {
       if (fire && timing.burnStart !== null) {
         const burn = unit((elapsed - timing.burnStart) / PLAY_TIME);
         if (elapsed >= timing.burnStart) {
+          if (!fireSoundStarted && burn < 1) {
+            fireSoundStarted = true;
+            this.controls.fireRumble?.((1 - burn) * PLAY_TIME / this.speed);
+          } else if (fireSoundStarted && burn === 1) {
+            this.controls.stopFireRumble?.();
+            fireSoundStarted = false;
+          }
           // The old play stays in place as its cards disappear into the flame and smoke.
           outgoing.forEach(image => {
             image.setPaperShade(unit(burn * 3));
