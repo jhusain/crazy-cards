@@ -5,7 +5,7 @@ import { shuffleFrame } from "./shuffle-animation.ts";
 import { wildReel, wildReelStop } from "./wild-reel.ts";
 import { isUpwardFlick, queuedCardFlick } from "./card-gesture.ts";
 import {
-  ART_HEIGHT, ART_WIDTH, CARD_DEPTH, HAND_FADE_WIDTH, PILE_STEP, artHeight, targetHandPlan, handPositions, opponentPositions, playLandingPositions,
+  ART_HEIGHT, ART_WIDTH, CARD_DEPTH, HAND_FADE_WIDTH, PILE_STEP, artHeight, planTableLayout, opponentPositions, playLandingPositions,
   committedFromPlay, collapsePlayPositions, automaticActionPosition, replayPosition, stockLayerCount, tableLayout, type CardPosition, type QueuedPileSlots,
 } from "./table-layout.ts";
 import {
@@ -78,6 +78,7 @@ export class CardTable extends Phaser.Scene {
   private resizePending = false;
   private speed = 1;
   private textureDensity: number;
+  private priorLayout?: Layout;
   private layoutWidth = 0;
   private layoutHeight = 0;
   private handEdge = Infinity;
@@ -151,7 +152,6 @@ export class CardTable extends Phaser.Scene {
       // Reserve the original slots while editing a play. Once committed, reserve
       // the final hand slots even when the server is still executing later groups.
       const targetCardWidth = this.state?.targetCardWidth ?? 240;
-      const maxRowSize = 8;
       const height = this.board.clientHeight;
       if (!width || !height) return;
       const queued = view?.queuedCards ?? [];
@@ -177,13 +177,14 @@ export class CardTable extends Phaser.Scene {
         this.scale.resize(pixelWidth, pixelHeight);
       }
       this.cameras.main.setZoom(pixelWidth / width, pixelHeight / height);
-      const layout = tableLayout(width, height, 1, view?.stockCount, maxRowSize,
-        view?.visibleDiscard.length, staged.length, this.state?.playCapacity,
-        this.queuedSlots && { ...this.queuedSlots, playedCount: this.queuedSlots.ids.length - queued.length });
-      const handLayout = committedIds.size
-        ? tableLayout(width, height, 1, view?.stockCount, maxRowSize, view?.visibleDiscard.length) : layout;
-      const plan = targetHandPlan(handLayout, cards, targetCardWidth, this.state?.keepGroupsTogether);
-      const rows = plan.rows;
+      const { layout, hand: plan } = planTableLayout(width, height, {
+        cards, target: targetCardWidth, keepGroups: this.state?.keepGroupsTogether ?? true,
+        stockCount: view?.stockCount, discardCount: view?.visibleDiscard.length,
+        playCount: staged.length, playCapacity: this.state?.playCapacity,
+        queuedSlots: this.queuedSlots && { ...this.queuedSlots, playedCount: this.queuedSlots.ids.length - queued.length },
+        heldLayout: this.priorLayout,
+      });
+      this.priorLayout = layout;
       const handSlots = plan.positions;
       const largestCard = Math.max(layout.pileWidth, ...handSlots.map(position => position.width));
       const textureDensity = Math.min(Math.floor(4096 / ART_HEIGHT),
@@ -195,7 +196,7 @@ export class CardTable extends Phaser.Scene {
       }
       const { pileY, pileHeight } = layout;
       this.board.style.setProperty("--turn-split", pileY + pileHeight * .53 + "px");
-      this.board.style.setProperty("--notice-y", handLayout.noticeY + "px");
+      this.board.style.setProperty("--notice-y", layout.noticeY + "px");
       const bounds = this.board.getBoundingClientRect();
       this.board.style.setProperty("--pile-center-x", bounds.left + width / 2 + "px");
       this.board.style.setProperty("--pile-center-y", bounds.top + pileY + layout.stockHeight / 2 + "px");
@@ -232,8 +233,8 @@ export class CardTable extends Phaser.Scene {
       const enemy = opponentPositions(layout, width, view.opponentCount);
       this.opponentButton.hidden = !enemy.length;
       if (enemy.length) this.positionButton(this.opponentButton, {
-        x: enemy[0]!.x, y: 0, width: enemy.at(-1)!.x + enemy.at(-1)!.width - enemy[0]!.x,
-        clipHeight: layout.opponentVisible,
+        x: enemy[0]!.x, y: Math.max(0, enemy[0]!.y), width: enemy.at(-1)!.x + enemy.at(-1)!.width - enemy[0]!.x,
+        clipHeight: Math.min(layout.opponentVisible, layout.pileHeight),
       });
       const oldEnemy = motion && priorRound ? opponentPositions(layout, width, priorRound.opponentCount) : undefined;
       const opponentPlayed = motion && view.event?.kind === "play" && view.event.seat !== view.seat;

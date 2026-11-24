@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  targetHandPlan, committedFromPlay, collapsePlayPositions, ART_WIDTH, CARD_DEPTH, CORNER_HEIGHT, CORNER_WIDTH, PILE_STEP, artHeight,
+  planTableLayout, targetHandPlan, committedFromPlay, collapsePlayPositions, ART_WIDTH, CARD_DEPTH, CORNER_HEIGHT, CORNER_WIDTH, PILE_STEP, artHeight,
   groupHandRows, handPositions, opponentPositions, pilePositions, playLandingPositions, replayPosition, automaticActionPosition, tableLayout, type CardPosition,
 } from "../src/table-layout.ts";
 
@@ -326,4 +326,60 @@ test("overlapping rows achieve the target width while every face and suit stays 
  }
  const last=positions.at(-1)!;
  assert(last.y+cornerHeight(last)<=740-30+.001);
+});
+
+test("the integrated tablet layout explores non-greedy group partitions at the target width", () => {
+  const cards = [8, 12, 12, 10, 10, 5, 5].map(rank => ({ rank }));
+  const { layout, hand } = planTableLayout(800, 1050, { cards, target: 240, keepGroups: true });
+  assert.deepEqual(hand.rows.map(row => row.length), [3, 4]);
+  close(hand.width, 240);
+  assert(layout.pileWidth >= 192 && layout.pileWidth <= 240);
+  close(layout.opponentWidth, layout.pileWidth);
+  close(layout.tableHeight - layout.inset - 10 - hand.positions.at(-1)!.y,
+    2 * cornerHeight(hand.positions.at(-1)!));
+  assert(Math.abs(layout.opponentVisible - layout.pileHeight - layout.inset) <= 2);
+});
+
+test("integrated layouts preserve visible corners, shared pile sizes, and symmetric clearance", () => {
+  for (const [w, h] of [[360, 650], [800, 1050], [1024, 700], [850, 270]] as const) {
+    for (const count of [1, 7, 18, 52]) for (const keepGroups of [true, false]) {
+      const cards = Array.from({ length: count }, (_, i) => ({ rank: Math.floor(i / 4) }));
+      for (const target of [40, 240, 1000]) for (const playCount of [0, 4, 12]) {
+        const { layout, hand } = planTableLayout(w, h, { cards, target, keepGroups, playCount });
+        assert.deepEqual(hand.rows.flat(), cards);
+        assert(hand.width <= target);
+        assert(layout.pileWidth <= target);
+        close(layout.opponentWidth, layout.pileWidth);
+        assert(layout.opponentVisible >= layout.pileHeight / 2 - .001);
+        close(layout.pileY - layout.opponentVisible, layout.handY - layout.pileY - layout.pileHeight);
+        close(layout.handY - layout.pileY - layout.stockHeight, 24);
+        const panel = automaticActionPosition(layout);
+        close(panel.width, layout.pileWidth);
+        close(panel.y, layout.pileY);
+        if (!playCount) close(panel.x, layout.piles.stock.x);
+        for (const position of hand.positions) {
+          assert(position.x >= layout.inset - .001);
+          assert(position.x + cornerWidth(position) <= w - layout.inset - 10 + .001);
+          assert(position.y + cornerHeight(position) <= h - layout.inset - 10 + .001);
+        }
+        if (keepGroups) for (let i = 1; i < hand.rows.length; i++) {
+          assert.notEqual(hand.rows[i - 1]!.at(-1)!.rank, hand.rows[i]![0]!.rank);
+        }
+      }
+    }
+  }
+});
+
+test("committed multi-group plays retain their layout while the remaining hand is optimized", () => {
+  const cards = Array.from({ length: 18 }, (_, i) => ({ rank: Math.floor(i / 2) }));
+  const original = planTableLayout(800, 1050, {
+    cards, target: 240, keepGroups: true, stockCount: 35, discardCount: 1, playCount: 4, playCapacity: 5,
+  }).layout;
+  const next = planTableLayout(800, 1050, {
+    cards: cards.slice(4), target: 240, keepGroups: true, stockCount: 35, discardCount: 2, playCount: 2,
+    heldLayout: original, queuedSlots: { discardCount: 1, playCount: 4, playCapacity: 5, playedCount: 2 },
+  }).layout;
+  assert.deepEqual(next.piles.stock, original.piles.stock);
+  assert.deepEqual(next.piles.play, original.piles.play.slice(2));
+  assert.deepEqual(next.piles.discard[0], original.piles.discard[0]);
 });

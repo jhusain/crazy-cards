@@ -77,14 +77,22 @@ export function tableLayout(
   width: number, height: number, handRows: number, stockCount = 52,
   maxRowSize = CARDS_PER_ROW, discardCount = 1, playCount = 0, playCapacity = discardCount + playCount,
   queuedSlots?: QueuedPileSlots,
+  preferredPileWidth?: number,
 ) {
   const inset = 20;
   const available = width - 2 * inset;
   const gap = 24;
   const baseGap = Math.min(19, width * .034);
-  const basePileWidth = Math.min(145, width * .326, (available - baseGap - 12) / 2.75,
-    height * .47 * ART_WIDTH / (1.5 * ART_HEIGHT));
   const stockLayers = stockLayerCount(stockCount);
+  const restingDiscard = queuedSlots?.discardCount ?? discardCount;
+  const restingLimit = (available - baseGap - 2 * (stockLayers - 1)) /
+    (2 + Math.max(0, restingDiscard - 1) * PILE_STEP + ART_HEIGHT / ART_WIDTH / 3);
+  const verticalLimit = (height - inset - HAND_FADE_WIDTH - 2 * gap - 4 * (stockLayers - 1) - 8) /
+    (1.5 * ART_HEIGHT / ART_WIDTH);
+  const basePileWidth = preferredPileWidth === undefined
+    ? Math.min(145, width * .326, (available - baseGap - 12) / 2.75,
+      height * .47 * ART_WIDTH / (1.5 * ART_HEIGHT))
+    : Math.max(.1, Math.min(preferredPileWidth, restingLimit, verticalLimit));
   const opponentWidth = basePileWidth;
   const opponentVisible = artHeight(opponentWidth) / 2;
   const pileY = opponentVisible + gap;
@@ -166,7 +174,7 @@ export function playPositions(layout: Layout, count: number, discardCount = 1): 
 export function opponentPositions(layout: Layout, tableWidth: number, count: number): CardPosition[] {
   const width = layout.opponentWidth;
   const available = tableWidth - 2 * layout.inset;
-  const gap = Math.min(width * .46, (available - width) / Math.max(1, count - 1));
+  const gap = Math.max(0, Math.min(width * .46, (available - width) / Math.max(1, count - 1)));
   const left = (tableWidth - width - gap * Math.max(0, count - 1)) / 2;
   const y = layout.opponentVisible - artHeight(width);
   return Array.from({ length: count }, (_, index) => ({ x: left + index * gap, y, width }));
@@ -176,7 +184,8 @@ export function discardPositions(layout: Layout, _tableWidth: number, count: num
   return pilePositions(layout, count).discard;
 }
 
-export function automaticActionPosition(layout: Layout): CardPosition {
+export function automaticActionPosition(layout: Layout & { automaticPosition?: CardPosition }): CardPosition {
+  if (layout.automaticPosition) return layout.automaticPosition;
   const last = layout.piles.discard.at(-1)!;
   return { x: Math.max(layout.inset, Math.min(layout.stockLeft, last.x - layout.pileWidth)),
     y: layout.pileY, width: layout.pileWidth };
@@ -195,28 +204,130 @@ export function collapsePlayPositions(anchor: CardPosition, count: number): Card
 }
 
 
-// Compare deterministic row packings. Width means the full card's width in
-// logical screen pixels (dp); only its corner strip consumes horizontal space.
-export function targetHandPlan<T extends { rank: number }>(layout: Layout, cards: readonly T[], target = 240, keepGroups = true) {
-  const available = Math.max(1, layout.tableWidth - 2 * layout.inset - HAND_FADE_WIDTH);
-  const room = Math.max(1, layout.tableHeight - layout.handY - layout.inset - HAND_FADE_WIDTH);
-  let best: { rows: T[][]; width: number; score: number } | undefined;
-  for (let columns = 1; columns <= Math.max(1,cards.length); columns++) {
-    const rows = groupHandRows(cards, columns, keepGroups);
-    if (!rows.length) return { rows, positions: [] as CardPosition[] };
-    const longest = Math.max(...rows.map(row => row.length));
-    const gap = Math.min(7,room/(rows.length*10));
-    const fit = Math.min(available / (longest * PILE_STEP),
-      Math.max(1,room-(rows.length-1)*gap)/rows.length*ART_WIDTH/CORNER_HEIGHT);
-    const width = Math.min(target,fit);
-    const score = Math.abs(width-target);
-    if (!best || score < best.score-.001 || Math.abs(score-best.score)<.001 && rows.length < best.rows.length) best={rows,width,score};
+// Every legal contiguous partition is represented by its row count and
+// smallest possible widest row. Narrower rows never reduce feasible width.
+function handPartitions<T extends { rank: number }>(cards: readonly T[], keepGroups: boolean) {
+  const boundaries = [0];
+  for (let index = 1; index <= cards.length; index++) {
+    if (index === cards.length || !keepGroups || cards[index - 1]!.rank !== cards[index]!.rank) {
+      boundaries.push(index);
+    }
   }
-  const {rows,width} = best!;
-  const longest = Math.max(...rows.map(row => row.length));
-  const left = layout.inset + (available-longest*width*PILE_STEP)/2;
-  const gap = Math.min(7,room/(rows.length*10));
-  return { rows, positions: rows.flatMap((row,r) => row.map((_,c) => ({
-    x:left+c*width*PILE_STEP, y:layout.handY+r*(cornerHeight(width)+gap), width,
+  const count = boundaries.length - 1;
+  const best = Array.from({ length: count + 1 }, () =>
+    Array<{ longest: number; previous: number } | undefined>(count + 1));
+  best[0]![0] = { longest: 0, previous: -1 };
+  const partitions: { rows: T[][]; longest: number }[] = [];
+  for (let rowCount = 1; rowCount <= count; rowCount++) {
+    for (let end = rowCount; end <= count; end++) {
+      for (let begin = rowCount - 1; begin < end; begin++) {
+        const prior = best[rowCount - 1]![begin];
+        if (!prior) continue;
+        const longest = Math.max(prior.longest, boundaries[end]! - boundaries[begin]!);
+        const current = best[rowCount]![end];
+        if (!current || longest < current.longest) best[rowCount]![end] = { longest, previous: begin };
+      }
+    }
+    const rows: T[][] = [];
+    let end = count;
+    for (let remaining = rowCount; remaining > 0; remaining--) {
+      const begin = best[remaining]![end]!.previous;
+      rows.unshift(cards.slice(boundaries[begin], boundaries[end]));
+      end = begin;
+    }
+    partitions.push({ rows, longest: best[rowCount]![count]!.longest });
+  }
+  return partitions;
+}
+
+function betterScore(score: readonly number[], previous: readonly number[]): boolean {
+  const first = score.findIndex((value, index) => Math.abs(value - previous[index]!) > 1e-6);
+  return first >= 0 && score[first]! < previous[first]!;
+}
+
+function chooseHandPlan<T extends { rank: number }>(
+  layout: Layout, partitions: ReturnType<typeof handPartitions<T>>, target: number, allowShift: boolean,
+) {
+  const available = Math.max(.01, layout.tableWidth - 2 * layout.inset - HAND_FADE_WIDTH);
+  const room = Math.max(.01, layout.tableHeight - layout.handY - layout.inset - HAND_FADE_WIDTH);
+  let best: { rows: T[][]; longest: number; width: number; step: number; shift: number; score: number[] } | undefined;
+  for (const { rows, longest } of partitions) {
+    const gap = Math.min(7, room / (rows.length * 10));
+    // Exact upper bound on card width for this partition. This is equivalent
+    // to shrinking and retrying every row count, without iterative rounding.
+    const width = Math.min(target, available / (longest * PILE_STEP),
+      (room - (rows.length - 1) * gap) / rows.length * ART_WIDTH / CORNER_HEIGHT);
+    const step = cornerHeight(width) + gap;
+    const lastSpace = room - (rows.length - 1) * step;
+    const shift = allowShift ? Math.max(0, lastSpace - 2 * cornerHeight(width)) : 0;
+    const margin = layout.opponentVisible + shift - layout.pileHeight;
+    const score = [target - width, Math.abs(lastSpace - shift - 2 * cornerHeight(width)),
+      Math.max(0, -margin), Math.abs(margin - layout.inset)];
+    if (!best || betterScore(score, best.score)) best = { rows, longest, width, step, shift, score };
+  }
+  if (!best) return { rows: [] as T[][], positions: [] as CardPosition[], width: target,
+    shift: allowShift ? Math.max(0, room - 2 * cornerHeight(target)) : 0, score: [0, 0, 0, 0] };
+  const { rows, longest, width, step, shift, score } = best;
+  const left = layout.inset + (available - longest * width * PILE_STEP) / 2;
+  return { rows, width, shift, score, positions: rows.flatMap((row, r) => row.map((_, c) => ({
+    x: left + c * width * PILE_STEP, y: layout.handY + shift + r * step, width,
   }))) };
+}
+
+export function targetHandPlan<T extends { rank: number }>(layout: Layout, cards: readonly T[], target = 240, keepGroups = true) {
+  return chooseHandPlan(layout, handPartitions(cards, keepGroups), target, false);
+}
+
+export interface TablePlanOptions<T> {
+  cards: readonly T[];
+  target: number;
+  keepGroups: boolean;
+  stockCount?: number;
+  discardCount?: number;
+  playCount?: number;
+  playCapacity?: number;
+  queuedSlots?: QueuedPileSlots;
+  heldLayout?: Layout;
+}
+
+export function planTableLayout<T extends { rank: number }>(
+  width: number, height: number, options: TablePlanOptions<T>,
+) {
+  const { cards, target, keepGroups, stockCount, discardCount = 1, playCount = 0,
+    playCapacity, queuedSlots, heldLayout } = options;
+  const partitions = handPartitions(cards, keepGroups);
+  const minimum = target * .8;
+  const candidates = [minimum];
+  for (let value = Math.ceil(minimum); value < target; value++) candidates.push(value);
+  candidates.push(target);
+  // A committed multi-group play retains the original pile geometry until its
+  // final group has finished. The hand can still independently shrink.
+  const held = queuedSlots && heldLayout?.tableWidth === width && heldLayout.tableHeight === height
+    ? heldLayout : undefined;
+  let best: { layout: Layout & { automaticPosition: CardPosition }; hand: ReturnType<typeof chooseHandPlan<T>>; score: number[] } | undefined;
+  for (const candidate of held ? [held.basePileWidth] : candidates) {
+    const layout = tableLayout(width, height, 1, stockCount, CARDS_PER_ROW, discardCount,
+      playCount, playCapacity, queuedSlots, candidate);
+    layout.opponentWidth = layout.pileWidth;
+    layout.opponentVisible = held ? held.opponentVisible : layout.pileHeight / 2;
+    // Both gaps are measured from the discard. The deck's layered bottom
+    // also retains its original 24-pixel clearance from the player's hand.
+    const gap = 24 + layout.stockHeight - layout.pileHeight;
+    layout.pileY = held ? held.pileY : layout.opponentVisible + gap;
+    layout.handY = layout.pileY + layout.stockHeight + 24;
+    const hand = chooseHandPlan(layout, partitions, target, !held);
+    layout.pileY += hand.shift;
+    layout.handY += hand.shift;
+    layout.opponentVisible += hand.shift;
+    layout.handWidth = hand.width;
+    layout.noticeY = layout.handY + 24;
+    for (const card of [layout.piles.stock, ...layout.piles.discard, ...layout.piles.play]) card.y = layout.pileY;
+    const resting = pileRow(width, layout.inset, layout.basePileWidth, layout.baseStockLeft,
+      layout.baseGap, layout.pileY, discardCount, 0, layout.stockLayers);
+    const automaticPosition = { x: playCount ? resting.stock.x : layout.piles.stock.x,
+      y: layout.pileY, width: layout.pileWidth };
+    const score = [Math.max(0, minimum - layout.pileWidth), ...hand.score, -layout.pileWidth];
+    if (!best || betterScore(score, best.score)) best = { layout: { ...layout, automaticPosition }, hand, score };
+  }
+  return best!;
 }
