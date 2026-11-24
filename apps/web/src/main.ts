@@ -539,7 +539,9 @@ function setupSettings(): void {
   const checks = {
     autoPass: "auto-pass", autoPickup: "auto-pickup", autoSingle: "auto-single",
     autoSingleExcludeWild: "auto-single-exclude-wild", autoSingleExcludeTwo: "auto-single-exclude-two",
-    autoSingleExcludeQueen: "auto-single-exclude-queen", autoSingleSkips: "auto-single-skips", dimUnplayable: "dim-unplayable",
+    autoSingleExcludeQueen: "auto-single-exclude-queen",
+    autoSingleIgnoreExclusionsWhenOpponentEmpty: "auto-single-ignore-exclusions-when-opponent-empty",
+    autoSingleSkips: "auto-single-skips", dimUnplayable: "dim-unplayable",
   } as const;
   for (const [key, id] of Object.entries(checks)) element<HTMLInputElement>(id).checked = settings[key as keyof typeof checks];
   animation.valueAsNumber = ANIMATION_SPEEDS.indexOf(settings.animationSpeed);

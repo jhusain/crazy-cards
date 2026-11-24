@@ -7,9 +7,10 @@ export function automaticPlay(view: TableView, settings: GameSettings): Card[] |
   if (!settings.autoSingle) return;
   const counts = new Map<number, number>();
   for (const card of view.hand) counts.set(card.rank, (counts.get(card.rank) ?? 0) + 1);
-  const lastCard = view.hand.length === 1;
+  const ignoreExclusions = view.hand.length === 1 ||
+    (settings.autoSingleIgnoreExclusionsWhenOpponentEmpty && view.opponentCount === 0);
   const topIsTwo = view.visibleDiscard.at(-1)?.rank === 2;
-  const eligible = view.hand.filter(card => view.legalLeads.includes(card.id) && (lastCard || (
+  const eligible = view.hand.filter(card => view.legalLeads.includes(card.id) && (ignoreExclusions || (
     !(settings.autoSingleExcludeWild && card.special === "wild") &&
     !(settings.autoSingleExcludeTwo && card.rank === 2 && !topIsTwo) &&
     !(settings.autoSingleExcludeQueen && card.special === "super-pickup"))));

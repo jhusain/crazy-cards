@@ -16,6 +16,7 @@ export interface GameSettings {
   autoSingleExcludeWild: boolean;
   autoSingleExcludeTwo: boolean;
   autoSingleExcludeQueen: boolean;
+  autoSingleIgnoreExclusionsWhenOpponentEmpty: boolean;
   autoSingleSkips: boolean;
   dimUnplayable: boolean;
 }
@@ -24,7 +25,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   animationSpeed: .7, aiPauseMs: 1500, dangerWarning: true, dangerThreshold: 1, targetCardWidth: 240, keepGroupsTogether: true,
   groupExceptWild: true, groupExceptTwo: true, autoPass: false, automaticDelayMs: 3000,
   autoPickup: false, autoSingle: false, autoSingleExcludeWild: false, autoSingleExcludeTwo: false,
-  autoSingleExcludeQueen: false, autoSingleSkips: false, dimUnplayable: false,
+  autoSingleExcludeQueen: false, autoSingleIgnoreExclusionsWhenOpponentEmpty: false, autoSingleSkips: false, dimUnplayable: false,
 };
 
 export function readSettings(value: unknown): GameSettings {
@@ -32,7 +33,7 @@ export function readSettings(value: unknown): GameSettings {
   const {
     animationSpeed, aiPauseMs, dangerWarning, dangerThreshold, targetCardWidth, keepGroupsTogether,
     groupExceptWild, groupExceptTwo, autoPass,
-    autoPickup, autoSingle, autoSingleExcludeWild, autoSingleExcludeTwo, autoSingleExcludeQueen, autoSingleSkips, dimUnplayable,
+    autoPickup, autoSingle, autoSingleExcludeWild, autoSingleExcludeTwo, autoSingleExcludeQueen, autoSingleIgnoreExclusionsWhenOpponentEmpty, autoSingleSkips, dimUnplayable,
   } = value as Partial<GameSettings>;
   const saved = value as Partial<GameSettings> & { autoPassDelayMs?: number };
   const delay = saved.automaticDelayMs ?? saved.autoPassDelayMs;
@@ -57,6 +58,7 @@ export function readSettings(value: unknown): GameSettings {
     autoSingleExcludeWild: typeof autoSingleExcludeWild === "boolean" ? autoSingleExcludeWild : false,
     autoSingleExcludeTwo: typeof autoSingleExcludeTwo === "boolean" ? autoSingleExcludeTwo : false,
     autoSingleExcludeQueen: typeof autoSingleExcludeQueen === "boolean" ? autoSingleExcludeQueen : false,
+    autoSingleIgnoreExclusionsWhenOpponentEmpty: autoSingleIgnoreExclusionsWhenOpponentEmpty === true,
     autoSingleSkips: typeof autoSingleSkips === "boolean" ? autoSingleSkips : false,
     dimUnplayable: typeof dimUnplayable === "boolean" ? dimUnplayable : false,
   };

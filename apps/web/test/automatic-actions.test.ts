@@ -3,7 +3,7 @@ import test from "node:test";
 import { GameServer } from "@crazy-eights/game-server";
 import { type TableView } from "@crazy-eights/protocol";
 import { AutomaticActions, automaticPlay } from "../src/automatic-actions.ts";
-import { DEFAULT_SETTINGS } from "../src/settings.ts";
+import { DEFAULT_SETTINGS, readSettings } from "../src/settings.ts";
 import { standardDeck } from "../../../packages/game-server/src/rules.ts";
 
 const card=(rank:number,suit:string)=>standardDeck().find(card=>card.rank===rank&&card.suit===suit)!;
@@ -158,5 +158,23 @@ test("two exclusion yields to a top two, but competing eligible cards and two gr
     assert.equal(automaticPlay({...view,hand:[two,card(2,"hearts")],legalLeads:[two.id,card(2,"hearts").id]},config),undefined);
     assert.equal(automaticPlay({...view,visibleDiscard:[card(3,"clubs")],activeSuit:"clubs"},config),undefined);
     assert.deepEqual(automaticPlay({...view,visibleDiscard:[card(3,"clubs")],activeSuit:"clubs",hand:[two]},config),[two]);
+  }
+});
+
+test("the empty-opponent override ignores every exclusion only when enabled", () => {
+  const exclusions = { ...settings, autoSingleExcludeWild: true, autoSingleExcludeTwo: true, autoSingleExcludeQueen: true };
+  const enabled = { ...exclusions, autoSingleIgnoreExclusionsWhenOpponentEmpty: true };
+  const actions = new AutomaticActions();
+  assert.equal(readSettings({}).autoSingleIgnoreExclusionsWhenOpponentEmpty, false);
+  assert.equal(readSettings(enabled).autoSingleIgnoreExclusionsWhenOpponentEmpty, true);
+  for (const candidate of [card(8, "hearts"), card(2, "clubs"), card(12, "spades")]) {
+    const other = card(6, "diamonds");
+    const view = snapshot({ opponentCount: 0, hand: [candidate, other], legalLeads: [candidate.id] });
+    assert.equal(automaticPlay(view, exclusions), undefined);
+    assert.deepEqual(actions.next(view, enabled), { type: "play", cards: [candidate] });
+    assert.equal(automaticPlay({ ...view, opponentCount: 1 }, enabled), undefined);
+    assert.equal(automaticPlay({ ...view, legalLeads: [] }, enabled), undefined);
+    assert.equal(automaticPlay({ ...view, legalLeads: [candidate.id, other.id] }, enabled), undefined);
+    assert.equal(automaticPlay(view, { ...enabled, autoSingle: false }), undefined);
   }
 });

@@ -472,7 +472,7 @@ export class CardTable extends Phaser.Scene {
     const alreadyQueued = playerPlayed && committedFromPlay(last, previous);
     const outgoingTargets = prior;
     const timing = phases ?? playPhases(alreadyQueued, false, opponentWildPlay(view), view.event!.burnsPreviousPlay);
-    const fire = timing.burnStart !== null ? this.add.graphics().setDepth(CARD_DEPTH.stock - 1) : undefined;
+    const fire = timing.burnStart !== null ? this.add.graphics().setDepth(CARD_DEPTH.discard + old.length - .5) : undefined;
     const anchor = outgoingTargets[0]!;
     const collapsedPositions = collapsePlayPositions(anchor, last.length);
     const incoming = last.map((card, index) => {
