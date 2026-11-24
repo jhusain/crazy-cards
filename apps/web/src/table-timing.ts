@@ -27,7 +27,7 @@ export function opponentWildPlay(view: TableView): boolean {
 export function playDuration(view: TableView): number {
   const wild = opponentWildPlay(view);
   const burn = view.event?.burnsPreviousPlay === true;
-  return Math.max(playPhases(false, false, wild, burn).total, playPhases(false, true, wild, burn).total);
+  return playPhases(false, false, wild, burn).total;
 }
 
 export function playPhases(queued: boolean, restoring: boolean, wild = false, burn = false) {
@@ -57,6 +57,12 @@ export function playPhases(queued: boolean, restoring: boolean, wild = false, bu
   return phases;
 }
 
+export function playReflow(view: TableView) {
+  if (view.event?.kind !== "play") return undefined;
+  const start = playDuration(view);
+  return { start, end: start + STAGE_FLIGHT };
+}
+
 export interface TableTiming extends GameSettings {
   animate: boolean;
 }
@@ -73,7 +79,7 @@ export function drawTimeline(view: TableView, seat: Seat) {
   const player = seat === view.seat;
   const duration = player ? HAND_DRAW : OPPONENT_DRAW;
   const reveal = player ? HAND_DRAW_REVEAL : 0;
-  const start = count > 0 && view.event?.penalty?.seat === seat ? playDuration(view) : 0;
+  const start = count > 0 && event?.penalty?.seat === seat ? playReflow(view)?.end ?? 0 : 0;
   const step = reveal + duration;
   const shuffles = count || event?.kind === "shuffle" && player ? (event?.reshuffles ?? []).map((shuffle, index) => ({ ...shuffle,
     start: start + shuffle.drawIndex * step + index * SHUFFLE_DURATION, duration: SHUFFLE_DURATION })) : [];
@@ -86,7 +92,7 @@ export function handReadinessTimeline(view: TableView) {
   const event = view.event;
   const humanDraw = drawTimeline(view, view.seat).total;
   const enemyDraw = drawTimeline(view, otherSeat(view.seat)).total;
-  const play = event?.kind === "play" ? playDuration(view) : 0;
+  const play = playReflow(view)?.end ?? 0;
   const emptyDraw = event?.kind === "draw" && !humanDraw && !enemyDraw ? HAND_DRAW : 0;
   const start = !event ? Math.max(HAND_DEAL, OPPONENT_DEAL) : Math.max(play, humanDraw, enemyDraw, emptyDraw);
   const duration = view.turn === view.seat && !view.result && !view.queuedCards.length

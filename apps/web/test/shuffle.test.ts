@@ -6,7 +6,7 @@ import { BACK_INNER_TOP, BACK_INNER_BOTTOM, pointRollOffsets, shuffleFrame } fro
 import { roundProgress } from "../src/round-progress.ts";
 import { OpponentReplay } from "../src/opponent-replay.ts";
 import { DEFAULT_SETTINGS } from "../src/settings.ts";
-import { HAND_READY, PLAY_TIME, SHUFFLE_DURATION, SHUFFLE_FILL, SHUFFLE_HALF, SHUFFLE_ROLL, SHUFFLE_PAUSE,
+import { HAND_READY, PLAY_TIME, STAGE_FLIGHT, SHUFFLE_DURATION, SHUFFLE_FILL, SHUFFLE_HALF, SHUFFLE_ROLL, SHUFFLE_PAUSE,
   drawTimeline, handReadinessTimeline, replayDelay, tableAnimationTime } from "../src/table-timing.ts";
 
 const deck={x:20,y:120,width:118};
@@ -80,10 +80,11 @@ test("both point labels travel downward through the full inner rectangle",()=>{
 
 test("a mid-pickup recycle waits for old-stock draws, then delays every subsequent draw and the hand's ready state",()=>{
   const view=pickup(),draw=drawTimeline(view,0),step=draw.duration+draw.reveal;
-  assert.deepEqual(draw.cardStarts,[PLAY_TIME,PLAY_TIME+step,PLAY_TIME+2*step+SHUFFLE_DURATION,
-    PLAY_TIME+3*step+SHUFFLE_DURATION,PLAY_TIME+4*step+SHUFFLE_DURATION]);
-  assert.equal(draw.shuffles[0]!.start,PLAY_TIME+2*step);
-  assert.equal(draw.total,PLAY_TIME+5*step+SHUFFLE_DURATION);
+  const pickupStart = PLAY_TIME + STAGE_FLIGHT;
+  assert.deepEqual(draw.cardStarts,[pickupStart,pickupStart+step,pickupStart+2*step+SHUFFLE_DURATION,
+    pickupStart+3*step+SHUFFLE_DURATION,pickupStart+4*step+SHUFFLE_DURATION]);
+  assert.equal(draw.shuffles[0]!.start,pickupStart+2*step);
+  assert.equal(draw.total,pickupStart+5*step+SHUFFLE_DURATION);
   assert.equal(handReadinessTimeline(view).start,draw.total);
   assert.equal(tableAnimationTime(view,.7,true),(draw.total+HAND_READY)/.7+48);
   assert.equal(tableAnimationTime(view,.7,false),0);

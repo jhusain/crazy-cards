@@ -9,7 +9,7 @@ import {
   committedFromPlay, collapsePlayPositions, automaticActionPosition, replayPosition, stockLayerCount, tableLayout, type CardPosition, type QueuedPileSlots,
 } from "./table-layout.ts";
 import {
-  HAND_DEAL, HAND_DRAW, OPPONENT_DEAL, PLAY_FLIGHT, PLAY_TIME, STAGE_FLIGHT, drawTimeline, handReadinessTimeline, playPhases, opponentWildPlay,
+  HAND_DEAL, HAND_DRAW, OPPONENT_DEAL, PLAY_FLIGHT, PLAY_TIME, STAGE_FLIGHT, drawTimeline, handReadinessTimeline, playPhases, playReflow, opponentWildPlay,
 } from "./table-timing.ts";
 
 type Layout = ReturnType<typeof tableLayout>;
@@ -47,6 +47,8 @@ type Controls = {
 type CardTarget = { card: Card; position: CardPosition; dimmed: boolean; staged: boolean; depth: number };
 type Arrival = { image: CardImage; position: CardPosition; id?: number };
 type DrawTimeline = ReturnType<typeof drawTimeline>;
+type ReflowFrame = (progress: number) => void;
+type RegisterReflow = (frame: ReflowFrame) => void;
 
 const at = (x: number, y: number, width: number): CardPosition => ({ x, y, width });
 const lerp = Phaser.Math.Linear;
@@ -74,7 +76,7 @@ export class CardTable extends Phaser.Scene {
   private stagingFlights = new Set<number>();
   private queuedSlots?: Omit<QueuedPileSlots, "playedCount"> & { round: number; ids: number[] };
   private painting = false;
-  private recycling = false;
+  private deferResize = false;
   private resizePending = false;
   private speed = 1;
   private textureDensity: number;
@@ -104,7 +106,7 @@ export class CardTable extends Phaser.Scene {
     this.art = new CardTextures(this.textures, this.images, this.textureDensity);
     this.cameras.main.setOrigin(0);
     const resize = () => {
-      if (this.recycling) { this.resizePending = true; return; }
+      if (this.deferResize) { this.resizePending = true; return; }
       this.paint();
     };
     const observer = new ResizeObserver(() => {
@@ -125,7 +127,7 @@ export class CardTable extends Phaser.Scene {
     const previous = this.state;
     this.state = state;
     this.speed = speed;
-    if (this.art) { this.recycling = false; this.resizePending = false; this.paint(previous, animate); }
+    if (this.art) { this.deferResize = false; this.resizePending = false; this.paint(previous, animate); }
   }
 
   setLocked(locked: boolean): void {
@@ -184,7 +186,16 @@ export class CardTable extends Phaser.Scene {
         queuedSlots: this.queuedSlots && { ...this.queuedSlots, playedCount: this.queuedSlots.ids.length - queued.length },
         heldLayout: this.priorLayout,
       });
+      const priorLayout = this.priorLayout;
       this.priorLayout = layout;
+      const motion = animate && previous?.view.revision !== view?.revision;
+      const priorRound = previous?.view.round === view?.round && view?.event !== null ? previous?.view : undefined;
+      const reflow = motion && priorRound && priorLayout && view ? playReflow(view) : undefined;
+      const reflowFrames: ReflowFrame[] = [];
+      const registerReflow: RegisterReflow | undefined = reflow ? frame => {
+        frame(0);
+        reflowFrames.push(frame);
+      } : undefined;
       const handSlots = plan.positions;
       const largestCard = Math.max(layout.pileWidth, ...handSlots.map(position => position.width));
       const textureDensity = Math.min(Math.floor(4096 / ART_HEIGHT),
@@ -194,23 +205,32 @@ export class CardTable extends Phaser.Scene {
         this.textureDensity = textureDensity;
         this.art = new CardTextures(this.textures, this.images, textureDensity);
       }
-      const { pileY, pileHeight } = layout;
-      this.board.style.setProperty("--turn-split", pileY + pileHeight * .53 + "px");
-      this.board.style.setProperty("--notice-y", layout.noticeY + "px");
-      const bounds = this.board.getBoundingClientRect();
-      this.board.style.setProperty("--pile-center-x", bounds.left + width / 2 + "px");
-      this.board.style.setProperty("--pile-center-y", bounds.top + pileY + layout.stockHeight / 2 + "px");
-      this.board.style.setProperty("--pile-row-height", layout.stockHeight + "px");
-      this.board.style.setProperty("--pile-row-width", width + "px");
       const stock = layout.piles.stock;
-      this.drawFelt(layout, width);
-      this.updateHandMask(layout, pixelWidth, pixelHeight);
-
+      const felt = this.add.graphics().setDepth(-1);
+      const bounds = this.board.getBoundingClientRect();
+      const original = reflow && priorLayout ? priorLayout : layout;
+      const placeTable = (progress: number) => {
+        const pileY = lerp(original.pileY, layout.pileY, progress);
+        const pileHeight = lerp(original.pileHeight, layout.pileHeight, progress);
+        const stockHeight = lerp(original.stockHeight, layout.stockHeight, progress);
+        const handY = lerp(original.handY, layout.handY, progress);
+        this.drawFelt(felt, width, pileY, pileHeight);
+        this.updateHandMask(layout, handY, pixelHeight);
+        this.board.style.setProperty("--turn-split", pileY + pileHeight * .53 + "px");
+        this.board.style.setProperty("--notice-y", lerp(original.noticeY, layout.noticeY, progress) + "px");
+        this.board.style.setProperty("--pile-center-x", bounds.left + width / 2 + "px");
+        this.board.style.setProperty("--pile-center-y", bounds.top + pileY + stockHeight / 2 + "px");
+        this.board.style.setProperty("--pile-row-height", stockHeight + "px");
+        this.board.style.setProperty("--pile-row-width", width + "px");
+        this.positionButton(this.replayButton, between(replayPosition(original), replayPosition(layout), progress));
+        const panel = between(automaticActionPosition(original), automaticActionPosition(layout), progress);
+        this.positionButton(this.automaticPanel, panel);
+        this.automaticPanel.style.setProperty("--automatic-card-width", panel.width + "px");
+      };
+      if (registerReflow) registerReflow(placeTable);
+      else placeTable(1);
       if (!view) return;
 
-      this.positionButton(this.replayButton, replayPosition(layout));
-      this.positionButton(this.automaticPanel, automaticActionPosition(layout));
-      this.automaticPanel.style.setProperty("--automatic-card-width", layout.pileWidth + "px");
       this.replayButton.hidden = staged.length > 0 && !this.state?.replaying;
       const reshuffling = animate && !!previous && previous.view.round === view.round &&
         previous.view.revision !== view.revision && !!view.event?.reshuffles?.length;
@@ -222,37 +242,26 @@ export class CardTable extends Phaser.Scene {
       this.priorCardPositions = new Map();
       this.priorCardShades = new Map();
       this.stagingFlights = new Set();
-      const motion = animate && previous?.view.revision !== view.revision;
       const stagingChanged = animate && !!previous &&
         (staged.length !== previous.staged.length || staged.some((card, index) => card.id !== previous.staged[index]?.id));
       const adjusting = stagingChanged || animate && (previous?.targetCardWidth !== targetCardWidth ||
         previous?.keepGroupsTogether !== this.state?.keepGroupsTogether ||
         previous?.dimUnplayable !== this.state?.dimUnplayable);
       const initialDeal = motion && !view.event;
-      const priorRound = previous?.view.round === view.round && view.event !== null ? previous.view : undefined;
       const enemy = opponentPositions(layout, width, view.opponentCount);
-      this.opponentButton.hidden = !enemy.length;
-      if (enemy.length) this.positionButton(this.opponentButton, {
-        x: enemy[0]!.x, y: Math.max(0, enemy[0]!.y), width: enemy.at(-1)!.x + enemy.at(-1)!.width - enemy[0]!.x,
-        clipHeight: Math.min(layout.opponentVisible, layout.pileHeight),
-      });
-      const oldEnemy = motion && priorRound ? opponentPositions(layout, width, priorRound.opponentCount) : undefined;
+      const oldEnemy = motion && priorRound ? opponentPositions(original, width, priorRound.opponentCount) : undefined;
       const opponentPlayed = motion && view.event?.kind === "play" && view.event.seat !== view.seat;
-      const playing = motion && priorRound && view.event?.kind === "play";
-      const stagedCommit = !!playing && view.event?.seat === view.seat && committedFromPlay(view.visibleDiscard, previous);
-      // Keep the deck and collapse anchor at their actual on-screen positions.
-      // Only restore the final layout after the new play has covered the old one.
-      const appendedStock = playing ? this.priorStockPosition ?? stock : undefined;
-      const collapseAnchor = playing ? priorPositions.get(priorRound.visibleDiscard[0]!.id) : undefined;
-      const phases = appendedStock ? playPhases(stagedCommit,
-        !samePosition(appendedStock, stock) || !samePosition(collapseAnchor, layout.piles.discard[0]!), opponentWildPlay(view), view.event?.burnsPreviousPlay) : undefined;
-      const drawingSeat = view.event?.kind === "draw" ? view.event.seat : view.event?.penalty?.seat ?? view.seat;
-      const shuffleDraw = reshuffling ? drawTimeline(view, drawingSeat) : undefined;
-      this.drawStock(stock, view.stockCount, backTexture, layout, adjusting, appendedStock, phases,
-        shuffleDraw, view.event?.kind === "shuffle" ? 0 : previous?.view.stockCount, back);
+      const stagedCommit = !!(reflow && view.event?.seat === view.seat && committedFromPlay(view.visibleDiscard, previous));
+      const phases = reflow ? playPhases(stagedCommit, false, opponentWildPlay(view), view.event?.burnsPreviousPlay) : undefined;
+      const draw = drawTimeline(view, view.seat);
+      const opponentDraw = drawTimeline(view, otherSeat(view.seat));
+      const stockDraw = reshuffling || (reflow && draw.count + opponentDraw.count > 0)
+        ? (opponentDraw.count ? opponentDraw : draw) : undefined;
+      this.drawStock(stock, view.stockCount, backTexture, layout, adjusting,
+        stockDraw, view.event?.kind === "shuffle" ? 0 : previous?.view.stockCount, back, registerReflow, original);
       this.drawDiscard(view, layout, stock, priorPositions, oldEnemy, adjusting, phases,
-        motion && priorRound ? previous : undefined);
-      this.drawOpponent(enemy, backTexture, stock, drawTimeline(view, otherSeat(view.seat)), initialDeal, opponentPlayed, oldEnemy);
+        motion && priorRound ? previous : undefined, registerReflow);
+      this.drawOpponent(enemy, backTexture, stock, opponentDraw, initialDeal, opponentPlayed, oldEnemy, registerReflow);
 
       const stagedTargets = layout.piles.play.map((position, index) => {
         const card = staged[index]!;
@@ -275,7 +284,9 @@ export class CardTable extends Phaser.Scene {
         const image = this.drawImage(this.art.face(card), position, depth);
         const button = buttons.get(card.id)!;
         this.priorCardPositions.set(card.id, position);
-        if (adjusting && from) {
+        if (registerReflow && from) {
+          registerReflow(t => this.positionButton(button, this.moveCard(image, from, position, t, card.id)));
+        } else if (adjusting && from) {
           const inFlight = priorFlights.has(card.id) || !previous?.staged.some(item => item.id === card.id);
           if (inFlight) { image.setDepth(CARD_DEPTH.staging + depth - CARD_DEPTH.play); this.stagingFlights.add(card.id); }
           const move = (t: number) => this.positionButton(button,
@@ -284,15 +295,17 @@ export class CardTable extends Phaser.Scene {
           this.tween(STAGE_FLIGHT, move, () => { image.setDepth(depth); this.stagingFlights.delete(card.id); });
         }
       }
-      const draw = drawTimeline(view, view.seat);
       const movingDraw = motion && !!priorRound && draw.count > 0;
       this.drawHand(handTargets, buttons, view, stock, priorPositions, priorShades, motion, adjusting, initialDeal,
-        movingDraw ? draw : undefined);
-      if (reshuffling) {
-        this.recycling = true;
+        movingDraw ? draw : undefined, registerReflow);
+      if (reflow) {
+        this.tween(reflow.end - reflow.start, t => reflowFrames.forEach(frame => frame(t)), undefined, reflow.start);
+      }
+      if (reshuffling || reflow) {
+        this.deferResize = true;
         const ready = handReadinessTimeline(view);
         this.tween(ready.start + ready.duration, () => {}, () => {
-          this.recycling = false;
+          this.deferResize = false;
           if (this.resizePending) {
             this.resizePending = false;
             queueMicrotask(() => this.paint());
@@ -304,9 +317,8 @@ export class CardTable extends Phaser.Scene {
     }
   }
 
-  private drawFelt(layout: Layout, width: number): void {
-    const { pileY, pileHeight } = layout;
-    const felt = this.add.graphics().setDepth(-1);
+  private drawFelt(felt: Phaser.GameObjects.Graphics, width: number, pileY: number, pileHeight: number): void {
+    felt.clear();
     const middle = pileY + pileHeight / 2;
     felt.lineStyle(1, 0xf4db9c, .12);
     felt.strokeEllipse(width / 2, middle, width * .88, pileHeight + 41);
@@ -314,54 +326,34 @@ export class CardTable extends Phaser.Scene {
     felt.strokeEllipse(width / 2, middle, width * .94, pileHeight + 58);
   }
 
-  private updateHandMask(layout: Layout, pixelWidth: number, pixelHeight: number): void {
+  private updateHandMask(layout: Layout, handY: number, pixelHeight: number): void {
     this.handEdge = layout.tableWidth - layout.inset;
     this.handBottom = layout.tableHeight - layout.inset;
-    const mask = document.createElement("canvas");
-    mask.width = pixelWidth;
-    mask.height = pixelHeight;
-    const ctx = mask.getContext("2d")!;
-    ctx.scale(pixelWidth / layout.tableWidth, pixelHeight / layout.tableHeight);
-    // Start above the card stroke and align to physical pixels: fractional
-    // mask edges must not leave an unmasked hairline across the right margin.
-    const pixelScaleY = pixelHeight / layout.tableHeight;
-    const maskTop = Math.max(0, Math.floor((layout.handY - 2) * pixelScaleY) / pixelScaleY);
-    ctx.fillStyle = "white";
-    ctx.fillRect(0, 0, layout.tableWidth, maskTop);
-    ctx.fillRect(0, maskTop, this.handEdge - HAND_FADE_WIDTH, layout.tableHeight);
-    const fade = ctx.createLinearGradient(this.handEdge - HAND_FADE_WIDTH, 0, this.handEdge, 0);
-    fade.addColorStop(0, "rgba(255,255,255,1)");
-    fade.addColorStop(1, "rgba(255,255,255,0)");
-    ctx.fillStyle = fade;
-    ctx.fillRect(this.handEdge - HAND_FADE_WIDTH, maskTop, HAND_FADE_WIDTH, layout.tableHeight);
-    // Multiply the existing right fade by the bottom fade, including their corner.
-    const bottomFade = ctx.createLinearGradient(0, this.handBottom - HAND_FADE_WIDTH, 0, this.handBottom);
-    bottomFade.addColorStop(0, "rgba(255,255,255,1)");
-    bottomFade.addColorStop(1, "rgba(255,255,255,0)");
-    ctx.globalCompositeOperation = "destination-in";
-    ctx.fillStyle = bottomFade;
-    ctx.fillRect(0, 0, layout.tableWidth, layout.tableHeight);
-    // Mask the already-composited canvas only within the hand region. Piles and
-    // opponent cards are above it; flights cross this fixed boundary smoothly.
-    // CSS compositing supports both Phaser's WebGL and Canvas renderers without
-    // reparenting cards or changing their existing global depth ordering.
+    const scale = pixelHeight / layout.tableHeight;
+    const maskTop = Math.max(0, Math.floor((handY - 2) * scale) / scale);
     const canvas = this.game.canvas;
-    canvas.style.maskImage = `url(${mask.toDataURL()})`;
-    canvas.style.maskSize = "100% 100%";
-    canvas.style.maskRepeat = "no-repeat";
+    // The opaque region above the hand bypasses the right fade. The bottom
+    // fade applies to both regions. CSS lets the boundary follow the reflow.
+    canvas.style.maskImage = [
+      `linear-gradient(to bottom, #000 ${this.handBottom - HAND_FADE_WIDTH}px, transparent ${this.handBottom}px)`,
+      `linear-gradient(to bottom, #000 ${maskTop}px, transparent ${maskTop}px)`,
+      `linear-gradient(to right, #000 ${this.handEdge - HAND_FADE_WIDTH}px, transparent ${this.handEdge}px)`,
+    ].join(", ");
+    canvas.style.maskComposite = "intersect, add";
   }
 
   private drawStock(
     deck: CardPosition, count: number, texture: string, layout: Layout, adjusting: boolean,
-    appended?: CardPosition, phases?: PlayPhases, draw?: DrawTimeline, beforeCount = count, back = 0,
+    draw: DrawTimeline | undefined, beforeCount = count, back = 0,
+    reflow?: RegisterReflow, original = layout,
   ): void {
-    const visible = draw ? 4 : stockLayerCount(count);
+    const visible = draw || reflow ? 4 : stockLayerCount(count);
     const images: CardImage[] = [];
     for (let index = visible - 1; index >= 0; index--) {
       images[index] = this.drawImage(texture, deck, CARD_DEPTH.stock + visible - index - 1);
     }
-    const place = (position: CardPosition, stockCount = draw ? beforeCount : count) => {
-      const step = 2 * position.width / layout.basePileWidth;
+    const place = (position: CardPosition, stockCount = draw ? beforeCount : count,
+      step = 2 * position.width / layout.basePileWidth) => {
       const layers = stockLayerCount(stockCount);
       images.forEach((image, index) => {
         this.placeImage(image, { ...position, x: position.x + index * step, y: position.y + index * step });
@@ -372,17 +364,16 @@ export class CardTable extends Phaser.Scene {
       this.priorStockPosition = position;
     };
     const from = this.priorStockPosition;
-    place(from && (adjusting || appended) ? from : deck);
-    if (from && appended && phases) {
-      this.tween(phases.total, progress => {
-        const elapsed = progress * phases.total;
-        place(elapsed < phases.flight ? between(from, appended, ease(elapsed / phases.flight)) :
-          between(appended, deck, ease(unit((elapsed - phases.returnStart) / Math.max(1, phases.total - phases.returnStart)))));
-      }, undefined, 0, "Linear");
-    } else if (from && adjusting && !samePosition(from, deck)) {
-      this.tween(STAGE_FLIGHT, t => place(between(from, deck, t)));
+    if (from && reflow) {
+      reflow(t => place(between(from, deck, t), draw || t === 0 ? beforeCount : count,
+        lerp(original.stockLayerStep, layout.stockLayerStep, t)));
+    } else {
+      place(from && adjusting ? from : deck);
+      if (from && adjusting && !samePosition(from, deck)) {
+        this.tween(STAGE_FLIGHT, t => place(between(from, deck, t)));
+      }
     }
-    if (!draw?.shuffles.length) return;
+    if (!draw) return;
     let stamp = "";
     const points = (old: number, next: number, progress = 1) => {
       const nextStamp = `${old}:${next}:${progress}`;
@@ -407,8 +398,8 @@ export class CardTable extends Phaser.Scene {
         const completed = draw.shuffles.filter(shuffle => elapsed >= shuffle.start + shuffle.duration);
         const drawn = draw.cardStarts.filter(start => elapsed >= start + draw.duration + draw.reveal).length;
         place(deck, beforeCount + completed.reduce((sum, shuffle) => sum + shuffle.stockCount, 0) - drawn);
-        const value = completed.at(-1)?.pointsAfter ?? draw.shuffles[0]!.pointsBefore;
-        points(value, value);
+        const value = completed.at(-1)?.pointsAfter ?? draw.shuffles[0]?.pointsBefore;
+        if (value !== undefined) points(value, value);
         delete this.board.dataset.shuffleStage;
         delete this.board.dataset.shuffleCycle;
       }
@@ -421,9 +412,24 @@ export class CardTable extends Phaser.Scene {
 
   private drawOpponent(
     enemy: CardPosition[], texture: string, stock: CardPosition,
-    draw: DrawTimeline, initialDeal: boolean, played: boolean, previous?: CardPosition[],
+    draw: DrawTimeline, initialDeal: boolean, played: boolean, previous?: CardPosition[], reflow?: RegisterReflow,
   ): void {
     const arrivals: Arrival[] = [];
+    const surviving = enemy.length - (previous ? draw.count : 0);
+    const placeTarget = (first?: CardPosition, last?: CardPosition) => {
+      this.opponentButton.hidden = !first || !last;
+      if (first && last) this.positionButton(this.opponentButton, {
+        x: first.x, y: Math.max(0, first.y), width: last.x + last.width - first.x,
+        clipHeight: artHeight(first.width) + Math.min(0, first.y),
+      });
+    };
+    if (reflow) {
+      const first = previous?.[0], last = previous?.[surviving - 1];
+      const firstTarget = enemy[0], lastTarget = enemy[surviving - 1];
+      reflow(t => placeTarget(first && firstTarget && between(first, firstTarget, t),
+        last && lastTarget && between(last, lastTarget, t)));
+      if (draw.count) this.tween(draw.total - draw.start, () => {}, () => placeTarget(enemy[0], enemy.at(-1)), draw.start);
+    } else placeTarget(enemy[0], enemy.at(-1));
     enemy.forEach((position, index) => {
       const image = this.drawImage(texture, position, CARD_DEPTH.opponent + index);
       const from = previous?.[index];
@@ -431,6 +437,8 @@ export class CardTable extends Phaser.Scene {
         this.deal(image, stock, position, OPPONENT_DEAL);
       } else if (previous && draw.count > 0 && index >= enemy.length - draw.count) {
         arrivals.push({ image, position });
+      } else if (from && reflow) {
+        reflow(t => this.moveCard(image, from, position, t));
       } else if (from && (draw.count > 0 || played) && !samePosition(from, position)) {
         this.placeImage(image, from);
         this.tween(played ? PLAY_FLIGHT : draw.duration,
@@ -443,7 +451,7 @@ export class CardTable extends Phaser.Scene {
   private drawDiscard(
     view: TableView, layout: Layout, stock: CardPosition,
     previousPositions: Map<number, CardPosition>, opponent: CardPosition[] | undefined,
-    adjusting: boolean, phases: PlayPhases | undefined, previous?: BoardState,
+    adjusting: boolean, phases: PlayPhases | undefined, previous?: BoardState, reflow?: RegisterReflow,
   ): void {
     const width = layout.tableWidth;
     const last = view.visibleDiscard;
@@ -451,9 +459,10 @@ export class CardTable extends Phaser.Scene {
     const old = view.event?.kind === "play" ? previous?.view.visibleDiscard ?? [] : [];
     const firstTarget = targets[0]!;
     const lastTarget = targets.at(-1)!;
-    this.positionButton(this.discardButton, {
-      ...firstTarget, clipWidth: lastTarget.x - firstTarget.x + lastTarget.width,
+    const placeTarget = (first: CardPosition, last: CardPosition) => this.positionButton(this.discardButton, {
+      ...first, clipWidth: last.x - first.x + last.width,
     });
+    if (!reflow) placeTarget(firstTarget, lastTarget);
     if (!old.length) {
       last.forEach((card, index) => {
         const target = targets[index]!;
@@ -480,6 +489,7 @@ export class CardTable extends Phaser.Scene {
     const fire = timing.burnStart !== null ? this.add.graphics().setDepth(CARD_DEPTH.discard + old.length - .5) : undefined;
     const anchor = outgoingTargets[0]!;
     const collapsedPositions = collapsePlayPositions(anchor, last.length);
+    if (reflow) placeTarget(prior[0]!, prior.at(-1)!);
     const incoming = last.map((card, index) => {
       const enemyIndex = Math.max(0, (opponent?.length ?? 0) - last.length + index);
       const from = playerPlayed ? previousPositions.get(card.id) ?? at((width - layout.handWidth) / 2, layout.handY, layout.handWidth)
@@ -541,19 +551,26 @@ export class CardTable extends Phaser.Scene {
           const start = outgoingTargets[index]!;
           const collapsed = { ...start, x: anchor.x };
           this.placeImage(image, elapsed < timing.returnStart ? { ...start, x: lerp(start.x, anchor.x, slide) }
-            : between(collapsed, targets[0]!, restore));
+            : between(collapsed, reflow ? anchor : targets[0]!, restore));
         });
       }
       incoming.forEach(({ image, appended, collapsed, target, id }) =>
         elapsed < timing.returnStart ? this.moveCard(image, appended, collapsed, slide, id) :
-          this.moveCard(image, collapsed, target, restore, id));
+          this.moveCard(image, collapsed, reflow ? collapsed : target, restore, id));
     }, () => {
       delete this.board.dataset.wildReel;
       delete this.board.dataset.wildPhase;
       fire?.destroy();
       outgoing.forEach(image => image.destroy());
       incoming.forEach(({ image }, index) => image.setDepth(CARD_DEPTH.discard + index));
+      if (reflow) placeTarget(collapsedPositions[0]!, collapsedPositions.at(-1)!);
     }, 0, "Linear");
+    if (reflow) reflow(t => {
+      // The landing tween owns these cards until it reaches the discard.
+      if (t === 0) return;
+      for (const { image, collapsed, target, id } of incoming) this.moveCard(image, collapsed, target, t, id);
+      placeTarget(between(collapsedPositions[0]!, firstTarget, t), between(collapsedPositions.at(-1)!, lastTarget, t));
+    });
   }
 
   private drawWildBurn(graphics: Phaser.GameObjects.Graphics, positions: CardPosition[], progress: number): void {
@@ -609,7 +626,7 @@ export class CardTable extends Phaser.Scene {
   private drawHand(
     targets: CardTarget[], buttons: Map<number, HTMLButtonElement>, view: TableView,
     stock: CardPosition, previousPositions: Map<number, CardPosition>, previousShades: Map<number, number>, motion: boolean,
-    stagingChanged: boolean, initialDeal: boolean, draw?: DrawTimeline,
+    stagingChanged: boolean, initialDeal: boolean, draw?: DrawTimeline, reflow?: RegisterReflow,
   ): void {
     const ready = handReadinessTimeline(view);
     const drawOrder = new Map(draw ? view.event?.drawnCards?.map((id, index) => [id, index]) : []);
@@ -620,7 +637,7 @@ export class CardTable extends Phaser.Scene {
     for (const { card, position, dimmed, depth } of targets) {
       const drawIndex = drawOrder.get(card.id);
       const from = previousPositions.get(card.id);
-      const initialDepth = draw && drawIndex === undefined && from
+      const initialDepth = (draw || reflow) && drawIndex === undefined && from
         ? previousDepths.get(card.id) ?? depth : depth;
       const image = this.drawImage(this.art.face(card), position, initialDepth);
       this.priorHandDepths.set(card.id, initialDepth);
@@ -633,6 +650,14 @@ export class CardTable extends Phaser.Scene {
         this.deal(image, stock, position, HAND_DEAL);
       } else if (drawIndex !== undefined) {
         arrivals[drawIndex] = { image, position, id: card.id };
+      } else if (reflow && from) {
+        reflow(t => {
+          if (t > 0 && image.depth !== depth) {
+            image.setDepth(depth);
+            this.priorHandDepths.set(card.id, depth);
+          }
+          move(from, position, t);
+        });
       } else if (draw && from) {
         // Keep the old overlap order and positions until the first draw begins,
         // including any delay for the opponent's play or a stock reshuffle.

@@ -3,7 +3,7 @@ import test from "node:test";
 import { SUITS, wildSuitOptions } from "@crazy-eights/protocol";
 import { suitInk, wildReelStop, wildReel, wildReelFrame, wildReelInk } from "../src/wild-reel.ts";
 import { GameServer } from "@crazy-eights/game-server";
-import { PLAY_FLIGHT, PLAY_TIME, HAND_READY, playPhases, playDuration, handReadinessTimeline, tableAnimationTime } from "../src/table-timing.ts";
+import { PLAY_FLIGHT, PLAY_TIME, STAGE_FLIGHT, HAND_READY, playPhases, playDuration, handReadinessTimeline, tableAnimationTime } from "../src/table-timing.ts";
 
 test("wild reels start with the printed suit, end with the call and never repeat adjacent stops", () => {
   for (const first of SUITS) for (const last of SUITS) for (const random of [0, .3, .7, .999]) {
@@ -64,10 +64,10 @@ test("opponent wilds fly normally, cycle for 2.3 normal durations, pause for .2,
     assert(phases.collapseEnd>phases.collapseStart);
     assert(phases.returnStart<=phases.total);
   }
-  const duration=playPhases(false,true,true).total;
+  const duration=playPhases(false,false,true).total;
   assert.equal(playDuration(view),duration);
-  assert.deepEqual(handReadinessTimeline(view),{start:duration,duration:HAND_READY});
-  assert.equal(tableAnimationTime(view,1,true),duration+HAND_READY+48);
+  assert.deepEqual(handReadinessTimeline(view),{start:duration+STAGE_FLIGHT,duration:HAND_READY});
+  assert.equal(tableAnimationTime(view,1,true),duration+STAGE_FLIGHT+HAND_READY+48);
   assert.equal(tableAnimationTime(view,1,false),0);
   assert.equal(playDuration({...view,event:{kind:"play",seat:0}}),PLAY_TIME);
   assert.equal(playDuration({...view,event:{kind:"play",seat:1,cards:[{id:0,rank:1,suit:"clubs",special:"reverse"}]}}),PLAY_TIME);
@@ -133,8 +133,8 @@ test("wild-on-wild burns for one normal play duration before the incoming slide"
   view.event = { kind: "play", seat: 0, burnsPreviousPlay: true,
     cards: [{ id: 7, rank: 8, suit: "clubs", special: "wild", calledSuit: "hearts" }] };
   assert.equal(playDuration(view), PLAY_TIME * 2);
-  assert.equal(handReadinessTimeline(view).start, PLAY_TIME * 2);
-  assert.equal(tableAnimationTime(view, 1, true), PLAY_TIME * 2 + HAND_READY + 48);
+  assert.equal(handReadinessTimeline(view).start, PLAY_TIME * 2 + STAGE_FLIGHT);
+  assert.equal(tableAnimationTime(view, 1, true), PLAY_TIME * 2 + STAGE_FLIGHT + HAND_READY + 48);
   view.event.seat = 1;
-  assert.equal(playDuration(view), playPhases(false, true, true).total + PLAY_TIME);
+  assert.equal(playDuration(view), playPhases(false, false, true).total + PLAY_TIME);
 });
