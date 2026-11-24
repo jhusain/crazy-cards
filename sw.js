@@ -1,5 +1,5 @@
-const CACHE="crazy-eights-38fa914cc62e162e";
-const SHELL=["./","./index.html","./manifest.webmanifest","./icons/icon-192.png","./icons/icon-512.png"];
+const CACHE="crazy-eights-56198061591c9145";
+const SHELL=["./","./index.html","./manifest.webmanifest","./icons/brand-192.png","./icons/brand-512.png","./icons/brand-monochrome.png"];
 self.addEventListener("install",event=>event.waitUntil((async()=>{
   const cache=await caches.open(CACHE);
   for(const path of SHELL){const response=await fetch(path,{cache:"reload"});
