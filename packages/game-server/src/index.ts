@@ -1,7 +1,7 @@
 import {
-  PLAY_SLOTS, SUITS, activeSuit, canFollowInQueue, canLead, otherSeat, skipsOpponent, wildSuitOptions,
-  type Card, type Command, type Move, type PlayMove, type PlayedCard,
-  type Request, type Response, type RoundEnd, type Seat, type TableView, type TurnEvent,
+  MATCH_ROUNDS, PLAY_SLOTS, SUITS, activeSuit, canFollowInQueue, canLead, otherSeat, skipsOpponent, wildSuitOptions,
+  type Card, type DeckReshuffle, type Command, type Move, type PlayMove, type PlayedCard,
+  type Request, type Response, type RoundEnd, type MatchEnd, type Seat, type TableView, type TurnEvent,
 } from "@crazy-eights/protocol";
 import { computerMove, sortPlayerHand } from "./computer.ts";
 import { DEFAULT_RULES, randomIndex, shuffled, standardDeck, type RandomIndex } from "./rules.ts";
@@ -11,7 +11,7 @@ function isRequest(value: unknown): value is Request {
   const { requestId, revision, command } = value as Partial<Request>;
   if (!Number.isSafeInteger(requestId) || !Number.isSafeInteger(revision) || !command || typeof command !== "object") return false;
   switch (command.type) {
-    case "snapshot": case "draw": case "pass": case "next-round": case "restart":
+    case "snapshot": case "draw": case "pass": case "next-round": case "restart": case "auto-play": case "debug-reshuffle":
       return true;
     case "play":
     case "play-queue":
@@ -31,6 +31,10 @@ export class GameServer {
   private lastPlay: PlayedCard[] = [];
   private lastPlaySize = 1;
   private points: [number, number] = [0, 0];
+  private roundsWon: [number, number] = [0, 0];
+  private roundStartingPpc = 1;
+  private pointsPerCard = 1;
+  private matchResult: MatchEnd | null = null;
   private revision = 0;
   private round = 0;
   private turn: Seat = 0;
@@ -44,11 +48,22 @@ export class GameServer {
 
   private readonly cpuSeat: Seat | null;
   private readonly random: RandomIndex;
+  private autoplay: boolean;
+  private debug = false;
 
-  constructor(cpuSeat: Seat | null = 1, random: RandomIndex = randomIndex) {
+  constructor(cpuSeat: Seat | null = 1, random: RandomIndex = randomIndex, autoplay = false) {
     this.cpuSeat = cpuSeat;
     this.random = random;
+    this.autoplay = autoplay;
     this.deal();
+  }
+
+  setAutoplay(enabled: boolean): void {
+    this.autoplay = enabled;
+  }
+
+  setDebug(enabled: boolean): void {
+    this.debug = enabled;
   }
 
   private get top(): PlayedCard {
@@ -56,7 +71,7 @@ export class GameServer {
   }
 
   get cpuIsUp(): boolean {
-    return !this.result && this.turn === this.cpuSeat;
+    return !this.result && (this.autoplay || this.turn === this.cpuSeat);
   }
 
   get automaticMove(): "queued" | "computer" | "draw" | "pass" | null {
@@ -90,7 +105,8 @@ export class GameServer {
     const hand = this.hands[seat];
     return {
       revision: this.revision, round: this.round, seat, turn: this.result ? null : this.turn,
-      points: [...this.points],
+      points: [...this.points], pointsPerCard: this.pointsPerCard,
+      roundsWon: [...this.roundsWon], matchResult: this.matchResult && { ...this.matchResult, roundsWon: [...this.roundsWon] },
       hand: [...sortPlayerHand(hand.filter(card => !queuedIds.has(card.id))), ...hand.filter(card => queuedIds.has(card.id))],
       opponentCount: this.hands[otherSeat(seat)].length,
       stockCount: this.stock.length, lastPlay: this.lastPlay.slice(),
@@ -111,7 +127,9 @@ export class GameServer {
       if (!isRequest(parsed)) throw new Error("Invalid game request.");
       requestId = parsed.requestId;
       if (parsed.command.type !== "snapshot") {
-        if (seat === this.cpuSeat) throw new Error("That seat is controlled by the computer.");
+        if (seat === this.cpuSeat || this.autoplay && parsed.command.type !== "restart" && parsed.command.type !== "next-round" && parsed.command.type !== "debug-reshuffle") {
+          throw new Error("That seat is controlled by the computer.");
+        }
         if (parsed.revision !== this.revision) throw new Error("The table has already changed. Try again.");
         this.handleCommand(seat, parsed.command);
       }
@@ -129,8 +147,8 @@ export class GameServer {
   }
 
   stepComputer(): boolean {
-    if (!this.cpuIsUp || this.cpuSeat === null) return false;
-    const seat = this.cpuSeat;
+    if (!this.cpuIsUp) return false;
+    const seat = this.turn;
     const { hand, move } = computerMove(this.hands[seat], this.hands[otherSeat(seat)].length, this.top, this.drewThisTurn);
     this.hands[seat] = hand;
     this.move(seat, move);
@@ -138,6 +156,8 @@ export class GameServer {
   }
 
   private deal(): void {
+    this.roundStartingPpc = this.result?.winner === "tie" ? this.roundStartingPpc * 2 : 1;
+    this.pointsPerCard = this.roundStartingPpc;
     const cards = shuffled(standardDeck(), this.random);
     const opening = cards.pop()!;
     const removed = this.random(DEFAULT_RULES.maxRemovedCards + 1);
@@ -160,15 +180,33 @@ export class GameServer {
 
   private handleCommand(seat: Seat, command: Exclude<Command, { type: "snapshot" }>): void {
     if (command.type === "restart") {
+      const previousWinner = this.matchResult && this.result?.winner !== "tie" ? this.result?.winner : null;
       this.points = [0, 0];
-      this.nextFirst = null;
+      this.roundsWon = [0, 0];
+      this.matchResult = null;
+      this.result = null;
+      this.nextFirst = previousWinner ?? null;
       this.round = 0;
       this.deal();
     } else if (command.type === "next-round") {
       if (!this.result) throw new Error("Finish this round first.");
+      if (this.matchResult) throw new Error("This match is over. Start a new match.");
       this.deal();
     } else if (this.queued) {
       throw new Error("Wait for the queued plays to finish.");
+    } else if (command.type === "debug-reshuffle") {
+      if (!this.debug) throw new Error("Enable debug mode to reshuffle the deck.");
+      if (this.result) throw new Error("Start a new round first.");
+      if (!this.discard.length) throw new Error("There are no earlier discards to reshuffle yet.");
+      // Debug mode treats the remaining stock as exhausted: only earlier discards refill it.
+      const reshuffle = this.recycleDiscard(0);
+      this.event = { seat, kind: "shuffle", reshuffles: [reshuffle] };
+      this.revision++;
+    } else if (command.type === "auto-play") {
+      if (this.result || this.turn !== seat) throw new Error("It’s not your turn.");
+      const decision = computerMove(this.hands[seat], this.hands[otherSeat(seat)].length, this.top, this.drewThisTurn);
+      this.hands[seat] = decision.hand;
+      this.move(seat, decision.move);
     } else if (command.type === "play-queue") {
       this.playQueue(seat, command.cards, command.suit);
     } else {
@@ -212,19 +250,28 @@ export class GameServer {
     if (moves.length && !this.result && this.turn === seat) this.queued = { seat, moves };
   }
 
-  private drawCards(seat: Seat, count: number): number[] {
+  private recycleDiscard(drawIndex: number): DeckReshuffle {
+    const reshuffle = { drawIndex, stockCount: this.discard.length,
+      pointsBefore: this.pointsPerCard, pointsAfter: this.pointsPerCard * 2 };
+    this.pointsPerCard = reshuffle.pointsAfter;
+    this.stock = shuffled(this.discard, this.random);
+    this.discard = [];
+    return reshuffle;
+  }
+
+  private drawCards(seat: Seat, count: number): { drawnCards: number[]; reshuffles: DeckReshuffle[] } {
     const drawn: number[] = [];
+    const reshuffles: DeckReshuffle[] = [];
     while (drawn.length < count) {
-      if (this.stock.length === 0) {
-        this.stock = shuffled(this.discard, this.random);
-        this.discard = [];
+      if (this.stock.length === 0 && this.discard.length > 0) {
+        reshuffles.push(this.recycleDiscard(drawn.length));
       }
       const card = this.stock.pop();
       if (!card) break;
       this.hands[seat].push(card);
       drawn.push(card.id);
     }
-    return drawn;
+    return { drawnCards: drawn, reshuffles };
   }
 
   private move(seat: Seat, move: Move): void {
@@ -233,10 +280,10 @@ export class GameServer {
       this.play(seat, move.cards, move.suit);
     } else if (move.type === "draw") {
       if (this.drewThisTurn) throw new Error("You’ve already drawn this turn. Play or pass.");
-      const drawnCards = this.drawCards(seat, 1);
+      const { drawnCards, reshuffles } = this.drawCards(seat, 1);
       this.drewThisTurn = true;
       if (drawnCards.length) this.passesWithoutProgress = 0;
-      this.event = { seat, kind: "draw", drawCount: drawnCards.length, drawnCards };
+      this.event = { seat, kind: "draw", drawCount: drawnCards.length, drawnCards, ...(reshuffles.length ? { reshuffles } : {}) };
     } else {
       if (!this.drewThisTurn) throw new Error("Draw a card before passing.");
       this.passesWithoutProgress++;
@@ -284,9 +331,10 @@ export class GameServer {
     const penaltyCount = pickupCount || (effects.some(card => card.special === "super-pickup") ? DEFAULT_RULES.superPickupCards : 0);
     const next = skips ? seat : opponent;
     // Default two-seat special ranks do not mix skip effects with draw effects.
-    const drawnCards = penaltyCount ? this.drawCards(opponent, penaltyCount) : undefined;
+    const pickup = penaltyCount ? this.drawCards(opponent, penaltyCount) : undefined;
+    const drawnCards = pickup?.drawnCards;
     const penalty = drawnCards ? { seat: opponent, count: drawnCards.length } : undefined;
-    this.event = { seat, kind: "play", cards: played, skips, penalty, drawnCards };
+    this.event = { seat, kind: "play", cards: played, skips, penalty, drawnCards, ...(pickup?.reshuffles.length ? { reshuffles: pickup.reshuffles } : {}) };
     this.advance(next);
   }
 
@@ -304,11 +352,17 @@ export class GameServer {
   }
 
   private finish(winner: RoundEnd["winner"], points: number, nextFirst: Seat): void {
+    points *= this.pointsPerCard;
     this.result = { winner, points };
     this.nextFirst = nextFirst;
     if (winner !== "tie") {
       this.points[winner] += points;
       this.points[otherSeat(winner)] -= points;
+      this.roundsWon[winner]++;
+      if (this.roundsWon[0] + this.roundsWon[1] >= MATCH_ROUNDS && this.points[0] !== this.points[1]) {
+        const matchWinner = this.points[0] > this.points[1] ? 0 : 1;
+        this.matchResult = { winner: matchWinner, points: this.points[matchWinner], roundsWon: [...this.roundsWon] };
+      }
     }
   }
 }

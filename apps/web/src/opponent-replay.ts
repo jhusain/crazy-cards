@@ -8,24 +8,26 @@ interface OpponentTurn {
 export class OpponentReplay {
   private current?: OpponentTurn;
   last?: OpponentTurn;
-  voluntaryDraw?: { before: TableView; after: TableView };
 
   record(before: TableView | undefined, after: TableView): void {
     if (!before || before.revision === after.revision) return;
-    if (!after.event || before.round !== after.round) {
+    if (!after.event || after.event.kind === "shuffle" || before.round !== after.round) {
       this.current = this.last = undefined;
-      this.voluntaryDraw = undefined;
       return;
     }
     const humanMove = after.event.seat === after.seat;
     const forced = before.turn === after.seat && before.legalLeads.length === 0 && after.event.kind !== "play";
     if (humanMove && !forced) {
       this.current = undefined;
-      this.voluntaryDraw = after.event.kind === "draw" ? { before, after } : undefined;
       return;
     }
 
-    this.voluntaryDraw = undefined;
+    if (humanMove && (!this.current || after.event.kind === "draw" && after.legalLeads.length > 0)) {
+      // A draw that opens a choice is not a forced draw-and-pass turn.
+      if (this.current) this.last = this.current;
+      this.current = undefined;
+      return;
+    }
     this.current ??= { before, frames: [] };
     this.current.frames.push(after);
     if (after.result || after.turn === null || (after.turn === after.seat && after.legalLeads.length > 0)) {

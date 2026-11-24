@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { SUITS, type Command, type Response, type Seat, type Suit } from "@crazy-eights/protocol";
+import { SUITS, otherSeat, type Command, type Response, type Seat, type Suit } from "@crazy-eights/protocol";
 import { GameServer } from "../src/index.ts";
 import { computerMove, sortHand, sortPlayerHand } from "../src/computer.ts";
 import { standardDeck } from "../src/rules.ts";
@@ -138,11 +138,55 @@ test("100 seeded computer-vs-computer rounds reach a result through the JSON bou
       assert.equal(new Set([...after.hand, ...after.lastPlay].map(item => item.id)).size, after.hand.length + after.lastPlay.length);
     }
     assert(server.view(0).result, `Round ${round} did not finish`);
-    const next = command(server, 0, { type: "next-round" });
-    assert.equal(next.view.round, round + 1);
+    const finished = server.view(0);
+    const next = command(server, 0, { type: finished.matchResult ? "restart" : "next-round" });
+    assert.equal(next.type,"state");
+    assert.equal(next.view.round, finished.matchResult ? 1 : finished.round + 1);
     assert.equal(next.view.points[0] + next.view.points[1], 0);
   }
   assert(sawTie, "At least one round gives the opponent a chance to tie");
+});
+
+test("exhibition games use the AI for both seats, reject manual moves, and stop at every result", () => {
+  let seed = 8371;
+  const random = (limit: number) => {
+    seed = (Math.imul(seed,1664525)+1013904223) >>> 0;
+    return seed % limit;
+  };
+  const server = new GameServer(1,random,true);
+  const seats = new Set<Seat>();
+  const outcomes = new Set<Seat | "tie">();
+  for(let round=1;round<=100;round++) {
+    assert.equal(command(server,0,{type:"draw"}).type,"error");
+    assert.equal(command(server,0,{type:"play",cards:[server.view(0).hand[0]!.id]}).type,"error");
+    for(let step=0;!server.view(0).result && step<1000;step++) {
+      const before=server.view(0);
+      seats.add(before.turn!);
+      const own=server.view(before.turn!);
+      const expected=computerMove(own.hand,own.opponentCount,own.lastPlay.at(-1)!,own.drewThisTurn).move;
+      assert.equal(server.automaticMove,"computer");
+      assert(server.stepAutomatic());
+      const after=server.view(0);
+      assert.equal(after.event?.seat,before.turn);
+      assert.equal(after.event?.kind,expected.type);
+      if(expected.type==="play") assert.deepEqual(after.event?.cards?.map(card=>card.id),expected.cards);
+      assert.deepEqual(after.queuedCards,[]);
+    }
+    const finished=server.view(0);
+    assert(finished.result,`Exhibition round ${round} did not finish`);
+    outcomes.add(finished.result.winner);
+    assert.equal(server.automaticMove,null);
+    assert.equal(server.stepAutomatic(),false);
+    assert.deepEqual(server.view(0),finished);
+    assert.equal(command(server,0,{type:finished.matchResult?"restart":"next-round"}).type,"state");
+  }
+  assert.deepEqual([...seats].sort(),[0,1]);
+  assert.deepEqual([...outcomes].sort(),[0,1,"tie"]);
+  const restarted=command(server,0,{type:"restart"});
+  assert.equal(restarted.type,"state");
+  assert.equal(restarted.view.round,1);
+  assert.deepEqual(restarted.view.points,[0,0]);
+  assert.equal(server.automaticMove,"computer");
 });
 
 test("computer moves match the original ComputerPlayer class on reference hands", () => {
@@ -226,6 +270,50 @@ test("single skips hug the same suit, preferring smaller matching groups", () =>
   const withTriple = [ace, ...triple];
   assert.equal(next(sortPlayerHand(withTriple), ace), triple[0]);
   assert.deepEqual(sortPlayerHand([jack, single]), sortHand([jack, single]));
+});
+
+test("skip hugging searches from the right and keeps adjacent same-suit skips together", () => {
+  const ace = card(1, "clubs");
+  const jack = card(11, "clubs");
+  const right = card(4, "clubs");
+  const left = card(6, "clubs");
+  const pair = [card(5, "spades"), card(5, "clubs")];
+  assert.deepEqual(sortPlayerHand([ace, jack, right, left, ...pair]), [...pair, left, jack, ace, right]);
+});
+
+test("skip hugging can continue through an adjacent matching suit", () => {
+  const jack = card(11, "spades");
+  const nonmatch = card(9, "hearts");
+  const single = card(12, "spades");
+  const pair = [card(2, "spades"), card(2, "diamonds")];
+  const hand = [jack, nonmatch, single, ...pair];
+  assert.deepEqual(sortPlayerHand(hand), [single, jack, ...pair, nonmatch]);
+});
+
+test("skip hugging ignores wild cards as suit matches", () => {
+  const jack = card(11, "clubs");
+  const eight = card(8, "clubs");
+  const fourClubs = card(4, "clubs");
+  const fourDiamonds = card(4, "diamonds");
+  assert.deepEqual(sortPlayerHand([jack, eight]), [eight, jack]);
+  assert.deepEqual(sortPlayerHand([jack, eight, fourDiamonds, fourClubs]), [eight, jack, fourClubs, fourDiamonds]);
+});
+
+test("skip hugging moves the matching card ahead of the whole rank group", () => {
+  const jack = card(11, "clubs");
+  const fourClubs = card(4, "clubs");
+  const fourDiamonds = card(4, "diamonds");
+  assert.deepEqual(sortPlayerHand([fourDiamonds, jack, fourClubs]), [jack, fourClubs, fourDiamonds]);
+
+  const ace = card(1, "clubs");
+  const fourSpades = card(4, "spades");
+  assert.deepEqual(sortPlayerHand([fourSpades, ace, jack, fourDiamonds, fourClubs]),
+    [jack, ace, fourClubs, fourSpades, fourDiamonds]);
+
+  const jackHearts = card(11, "hearts");
+  const fourHearts = card(4, "hearts");
+  assert.deepEqual(sortPlayerHand([fourHearts, fourClubs, fourDiamonds, fourSpades, jackHearts]),
+    [jackHearts, fourHearts, fourSpades, fourClubs, fourDiamonds]);
 });
 
 test("illegal queue suffixes leave the table untouched, and an eight uses its projected suit", () => {
@@ -328,4 +416,197 @@ test("queued eights can keep the preceding jack's suit, and recyclables retain t
     assert.equal(command(server, seat, { type: "pass" }).type, "state");
   }
   assert.deepEqual(Object.fromEntries(seen), { [eightH]: "hearts", [eightD]: "diamonds" });
+});
+
+
+test("single skips first join the matching tail of the other skip group", () => {
+  for (const [singleRank,groupRank] of [[11,1],[1,11]]) {
+    const single=card(singleRank!,"clubs");
+    const matching=card(groupRank!,"clubs");
+    const other=card(groupRank!,"diamonds");
+    const ordinary=card(4,"clubs");
+    const ordered=sortPlayerHand([single,matching,other,ordinary]);
+    assert.deepEqual(ordered.slice(0,3),[other,matching,single]);
+    assert.equal(ordered[3],ordinary);
+  }
+});
+
+test("ordinary quadruples precede a lone wild, while multiple wilds stay first", () => {
+  const quad=SUITS.map(suit=>card(6,suit));
+  const wild=card(8,"clubs");
+  const ordered=sortPlayerHand([wild,...quad,card(4,"hearts")]);
+  assert(ordered.slice(0,4).every(member=>member.rank===6));
+  assert.equal(ordered[4],wild);
+  const multiple=sortPlayerHand([wild,card(8,"diamonds"),...quad]);
+  assert(multiple.slice(0,2).every(member=>member.rank===8));
+  for (const rank of [1,2,11,12]) {
+    const specialQuad=SUITS.map(suit=>card(rank,suit));
+    assert.equal(sortPlayerHand([wild,...specialQuad])[0],wild);
+  }
+});
+
+
+// Arrange small endgame positions, then exercise rules through the JSON interface.
+function endgame(server:GameServer,winner:Seat|"tie",remaining=1):Response {
+  const others=standardDeck().filter(c=>c.rank===4||c.rank===5).slice(0,remaining);
+  const hands=winner==="tie"?[[],[]]:winner===0?[[],others]:[others,[]];
+  const turn:Seat=winner==="tie"?0:winner===0?1:0;
+  Object.assign(server,{hands,turn,stock:[],discard:[],lastPlay:[card(3,"clubs")],lastPlaySize:1,
+    drewThisTurn:true,result:null,queued:null,passesWithoutProgress:0});
+  return command(server,turn,{type:"pass"});
+}
+
+test("real discard recycling doubles PPC, empty stock attempts do not",()=>{
+  const server=new GameServer(null);
+  Object.assign(server,{hands:[[card(6,"clubs")],[card(7,"hearts")]],turn:0,stock:[],
+    discard:[card(4,"clubs"),card(5,"clubs")],lastPlay:[card(3,"clubs")],lastPlaySize:1,drewThisTurn:false});
+  assert.equal(command(server,0,{type:"draw"}).view.pointsPerCard,2);
+  command(server,0,{type:"pass"});
+  assert.equal(command(server,1,{type:"draw"}).view.pointsPerCard,2);
+  command(server,1,{type:"pass"});
+  assert.equal(command(server,0,{type:"draw"}).view.pointsPerCard,2);
+  command(server,0,{type:"pass"});
+  Object.assign(server,{discard:[card(9,"clubs")]});
+  assert.equal(command(server,1,{type:"draw"}).view.pointsPerCard,4);
+});
+
+test("ties double the next starting PPC independently of in-round recycling",()=>{
+  const server=new GameServer(null);
+  assert.equal(server.view(0).pointsPerCard,1);
+  Object.assign(server,{pointsPerCard:4});
+  assert.equal(endgame(server,"tie").view.result?.winner,"tie");
+  assert.deepEqual(server.view(0).roundsWon,[0,0]);
+  assert.equal(command(server,0,{type:"next-round"}).view.pointsPerCard,2);
+  endgame(server,"tie");
+  assert.equal(command(server,0,{type:"next-round"}).view.pointsPerCard,4);
+  const won=endgame(server,0,2).view;
+  assert.deepEqual(won.result,{winner:0,points:8});
+  assert.deepEqual(won.points,[8,-8]);
+  assert.equal(command(server,0,{type:"next-round"}).view.pointsPerCard,1);
+});
+
+test("three decisive rounds end a match by total points, recording both players' wins",()=>{
+  const server=new GameServer(null);
+  endgame(server,"tie");command(server,0,{type:"next-round"});
+  assert.deepEqual(endgame(server,0).view.roundsWon,[1,0]); // two points after a tie
+  command(server,0,{type:"next-round"});
+  assert.equal(endgame(server,0).view.matchResult,null);
+  command(server,0,{type:"next-round"});
+  const final=endgame(server,1,5).view;
+  assert.deepEqual(final.roundsWon,[2,1]);
+  assert.deepEqual(final.points,[-2,2]);
+  assert.deepEqual(final.matchResult,{winner:1,points:2,roundsWon:[2,1]});
+  assert.equal(server.automaticMove,null);
+  assert.equal(command(server,0,{type:"next-round"}).type,"error");
+  const reset=command(server,0,{type:"restart"}).view;
+  assert.equal(reset.round,1);assert.equal(reset.pointsPerCard,1);assert.equal(reset.matchResult,null);
+  assert.deepEqual(reset.roundsWon,[0,0]);assert.deepEqual(reset.points,[0,0]);
+});
+
+test("a points tie after three decisive rounds extends the match until a winner emerges",()=>{
+  const server=new GameServer(null);
+  endgame(server,0);command(server,0,{type:"next-round"});
+  endgame(server,0);command(server,0,{type:"next-round"});
+  assert.equal(endgame(server,1,2).view.matchResult,null);
+  assert.deepEqual(server.view(0).points,[0,0]);
+  assert.equal(command(server,0,{type:"next-round"}).type,"state");
+  assert.equal(endgame(server,"tie").view.matchResult,null);
+  assert.equal(command(server,0,{type:"next-round"}).type,"state");
+  assert.deepEqual(endgame(server,0).view.matchResult,{winner:0,points:2,roundsWon:[3,1]});
+});
+
+test("debug assistance uses the existing AI and autoplay can be toggled at runtime",()=>{
+  const server=rigged([card(6,"clubs").id,card(6,"hearts").id],[],card(3,"clubs").id);
+  const before=server.view(0);
+  const expected=computerMove(before.hand,before.opponentCount,before.lastPlay.at(-1)!,before.drewThisTurn).move;
+  const assisted=command(server,0,{type:"auto-play"});
+  assert.equal(assisted.type,"state");
+  assert.equal(assisted.view.event?.kind,expected.type);
+  if(expected.type==="play") assert.deepEqual(assisted.view.event?.cards?.map(c=>c.id),expected.cards);
+  server.setAutoplay(true);
+  assert.equal(command(server,0,{type:"draw"}).type,"error");
+  server.setAutoplay(false);
+  const reset=command(server,0,{type:"restart"});
+  assert.equal(reset.type,"state");
+  assert.equal(command(server,0,{type:"auto-play"}).type,reset.view.turn===0?"state":"error");
+});
+
+test("reshuffle JSON records the exact draw boundary and PPC change for both observers",()=>{
+  const server=new GameServer(null);
+  Object.assign(server,{hands:[[card(12,"spades"),card(7,"clubs")],[card(5,"hearts")]],turn:0,
+    stock:[card(9,"clubs")],discard:[card(4,"clubs"),card(6,"clubs"),card(10,"clubs")],
+    lastPlay:[card(12,"hearts")],lastPlaySize:1,drewThisTurn:false});
+  const after=command(server,0,{type:"play",cards:[card(12,"spades").id]}).view;
+  const expected=[{drawIndex:1,stockCount:4,pointsBefore:1,pointsAfter:2}];
+  assert.deepEqual(after.event?.reshuffles,expected);
+  assert.equal(after.event?.drawnCards,undefined);
+  assert.deepEqual(server.view(1).event?.reshuffles,expected);
+  assert.equal(server.view(1).event?.drawnCards?.length,5);
+  assert.equal(server.view(1).event?.drawnCards?.[0],card(9,"clubs").id);
+  assert.equal(after.pointsPerCard,2);
+  assert.equal(after.stockCount,0);
+});
+
+test("debug reshuffles replace a nonempty stock exactly as an empty stock, preserving the last play and turn",()=>{
+  const create=(stock:ReturnType<typeof standardDeck>)=>{
+    const server=new GameServer(null,()=>0);
+    Object.assign(server,{hands:[[card(6,"clubs")],[card(7,"hearts")]],turn:0,drewThisTurn:true,
+      stock,discard:[card(4,"clubs"),card(8,"hearts"),card(10,"diamonds")],
+      lastPlay:[{...card(8,"clubs"),calledSuit:"spades"}],lastPlaySize:1});
+    server.setDebug(true);
+    return server;
+  };
+  const full=create([card(3,"hearts"),card(9,"clubs")]),empty=create([]);
+  const before=full.view(0);
+  const actual=command(full,0,{type:"debug-reshuffle"}),expected=command(empty,0,{type:"debug-reshuffle"});
+  assert.equal(actual.type,"state");assert.deepEqual(actual.view,expected.view);
+  const after=actual.view;
+  assert.equal(after.revision,before.revision+1);
+  assert.equal(after.stockCount,3);assert.equal(after.pointsPerCard,2);
+  assert.deepEqual(after.lastPlay,before.lastPlay);assert.deepEqual(after.visibleDiscard,before.visibleDiscard);
+  assert.deepEqual(after.hand,before.hand);assert.equal(after.opponentCount,before.opponentCount);
+  assert.equal(after.turn,before.turn);assert.equal(after.drewThisTurn,true);
+  assert.deepEqual(after.event,{seat:0,kind:"shuffle",reshuffles:[{drawIndex:0,stockCount:3,pointsBefore:1,pointsAfter:2}]});
+  assert.deepEqual(full.view(1).event,after.event);
+  const drawn:number[]=[];
+  for(let i=0;i<3;i++){
+    Object.assign(full,{drewThisTurn:false});Object.assign(empty,{drewThisTurn:false});
+    const a=command(full,0,{type:"draw"}),b=command(empty,0,{type:"draw"});
+    assert.deepEqual(a.view,b.view);drawn.push(...a.view.event!.drawnCards!);
+  }
+  assert.deepEqual(drawn.sort((a,b)=>a-b),[card(4,"clubs").id,card(8,"hearts").id,card(10,"diamonds").id].sort((a,b)=>a-b));
+  assert.equal(full.view(0).hand.find(c=>c.id===card(8,"hearts").id)?.suit,"hearts");
+});
+
+test("debug reshuffling is gated and does not invent a refill when no earlier discards exist",()=>{
+  const server=new GameServer(null);
+  Object.assign(server,{discard:[card(4,"clubs")],turn:1});
+  const before=server.view(0);
+  assert.equal(command(server,0,{type:"debug-reshuffle"}).type,"error");
+  assert.deepEqual(server.view(0),before);
+  server.setDebug(true);server.setAutoplay(true);
+  assert.equal(command(server,0,{type:"debug-reshuffle"}).type,"state");
+  assert.equal(server.view(0).turn,1);assert.equal(server.view(0).stockCount,1);
+  const after=server.view(0);
+  assert.equal(command(server,0,{type:"debug-reshuffle"}).type,"error");
+  assert.deepEqual(server.view(0),after);
+  Object.assign(server,{discard:[card(5,"clubs")]});server.setDebug(false);
+  assert.equal(command(server,0,{type:"debug-reshuffle"}).type,"error");
+});
+
+
+test("a new match is opened by the last round winner, even when the other player won the match",()=>{
+  for(const lastWinner of [0,1] as const) {
+    const server=new GameServer(null,()=>0);
+    const matchWinner=otherSeat(lastWinner);
+    endgame(server,matchWinner,5);command(server,0,{type:"next-round"});
+    endgame(server,matchWinner,5);command(server,0,{type:"next-round"});
+    const final=endgame(server,lastWinner).view;
+    assert.equal(final.matchResult?.winner,matchWinner);
+    const reset=command(server,0,{type:"restart"}).view;
+    assert.equal(reset.turn,lastWinner);
+    assert.equal(reset.round,1);
+    assert.deepEqual(reset.points,[0,0]);
+    assert.deepEqual(reset.roundsWon,[0,0]);
+  }
 });

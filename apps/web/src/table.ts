@@ -1,31 +1,56 @@
 import Phaser from "phaser";
-import { PLAY_SLOTS, canFollowInQueue, otherSeat, type Card, type TableView } from "@crazy-eights/protocol";
-import { CardTextures, describeCard, loadCardArt } from "./cards.ts";
-import { isUpwardFlick, isVerticalFlick } from "./card-gesture.ts";
-import { keepCornersVisible } from "./hand-motion.ts";
+import { PLAY_SLOTS, canFollowInQueue, otherSeat, wildSuitOptions, type Card, type TableView } from "@crazy-eights/protocol";
+import { CardTextures, describeCard, loadCardArt, type FaceTexture } from "./cards.ts";
+import { shuffleFrame } from "./shuffle-animation.ts";
+import { wildReel, wildReelStop } from "./wild-reel.ts";
+import { isUpwardFlick, queuedCardFlick } from "./card-gesture.ts";
 import {
-  ART_WIDTH, CORNER_HEIGHT, CORNER_WIDTH, artHeight, discardPositions, groupHandRows, handPositions, opponentPositions, playPositions,
-  tableLayout, type CardPosition,
+  ART_HEIGHT, ART_WIDTH, CARD_DEPTH, HAND_FADE_WIDTH, PILE_STEP, artHeight, targetHandPlan, handPositions, opponentPositions, playLandingPositions,
+  committedFromPlay, collapsePlayPositions, automaticActionPosition, replayPosition, stockLayerCount, tableLayout, type CardPosition, type QueuedPileSlots,
 } from "./table-layout.ts";
-import type { GameSettings } from "./settings.ts";
 import {
-  HAND_DEAL, HAND_DRAW, OPPONENT_DEAL, PLAY_FLIGHT, PLAY_HOLD, PLAY_SLIDE, STAGE_FLIGHT, drawTimeline,
+  HAND_DEAL, HAND_DRAW, OPPONENT_DEAL, PLAY_FLIGHT, PLAY_TIME, STAGE_FLIGHT, drawTimeline, handReadinessTimeline, playPhases, opponentWildPlay,
 } from "./table-timing.ts";
 
 type Layout = ReturnType<typeof tableLayout>;
-type Image = Phaser.GameObjects.Image;
+type PlayPhases = ReturnType<typeof playPhases>;
+// A card owns its layers, so its paper and ink always move and overlap as one unit.
+class CardImage extends Phaser.GameObjects.Container {
+  private readonly layers: Phaser.GameObjects.Image[];
+  private readonly grayPaper?: Phaser.GameObjects.Image;
+
+  constructor(scene: Phaser.Scene, texture: string | FaceTexture) {
+    const keys = typeof texture === "string" ? [texture] : [texture.paper, texture.grayPaper, texture.ink];
+    const layers = keys.map(key => scene.add.image(0, 0, key).setOrigin(0));
+    super(scene, 0, 0, layers);
+    this.layers = layers;
+    if (typeof texture !== "string") this.grayPaper = layers[1]!.setAlpha(0);
+    scene.add.existing(this);
+  }
+
+  setPaperShade(value: number): void {
+    this.grayPaper?.setAlpha(value);
+  }
+
+  setCrop(x: number, y: number, width: number, height: number): void {
+    for (const layer of this.layers) layer.setCrop(x, y, width, height);
+  }
+}
 type BoardState = {
-  view: TableView; staged: Card[]; back: number; locked: boolean;
-  pickup: GameSettings["pickupAnimation"];
+  view: TableView; staged: Card[]; back: number; locked: boolean; targetCardWidth: number; keepGroupsTogether: boolean; dimUnplayable: boolean; replaying: boolean; playCapacity?: number;
 };
 type Controls = {
   tapCard: (id: number) => void; flickCard: (id: number) => void;
-  playQueue: () => void; clearPlay: () => void; ready: () => void;
+  playQueue: () => void; clearPlay: () => void; ready: () => void; suitBling?: () => void;
 };
-type CardTarget = { card: Card; position: CardPosition; staged: boolean };
+type CardTarget = { card: Card; position: CardPosition; dimmed: boolean; staged: boolean; depth: number };
+type Arrival = { image: CardImage; position: CardPosition; id?: number };
+type DrawTimeline = ReturnType<typeof drawTimeline>;
 
 const at = (x: number, y: number, width: number): CardPosition => ({ x, y, width });
 const lerp = Phaser.Math.Linear;
+const ease = Phaser.Math.Easing.Sine.InOut;
+const unit = (value: number) => Phaser.Math.Clamp(value, 0, 1);
 const samePosition = (a: CardPosition | undefined, b: CardPosition) =>
   a?.x === b.x && a.y === b.y && a.width === b.width;
 
@@ -42,17 +67,28 @@ export class CardTable extends Phaser.Scene {
   private art!: CardTextures;
   private state?: BoardState;
   private priorCardPositions = new Map<number, CardPosition>();
+  private priorCardShades = new Map<number, number>();
+  private priorStockPosition?: CardPosition;
+  private stagingFlights = new Set<number>();
+  private queuedSlots?: Omit<QueuedPileSlots, "playedCount"> & { round: number; ids: number[] };
   private painting = false;
+  private recycling = false;
+  private resizePending = false;
   private speed = 1;
-  private readonly textureDensity: number;
+  private textureDensity: number;
   private layoutWidth = 0;
   private layoutHeight = 0;
+  private handEdge = Infinity;
+  private handBottom = Infinity;
 
   constructor(
     private readonly board: HTMLElement,
     private readonly cardTargets: HTMLElement,
     private readonly stockButton: HTMLButtonElement,
     private readonly discardButton: HTMLButtonElement,
+    private readonly replayButton: HTMLButtonElement,
+    private readonly automaticPanel: HTMLElement,
+    private readonly opponentButton: HTMLButtonElement,
     private readonly controls: Controls,
     private readonly images: Awaited<ReturnType<typeof loadCardArt>>,
     private readonly density: number,
@@ -64,11 +100,14 @@ export class CardTable extends Phaser.Scene {
   create(): void {
     this.art = new CardTextures(this.textures, this.images, this.textureDensity);
     this.cameras.main.setOrigin(0);
+    const resize = () => {
+      if (this.recycling) { this.resizePending = true; return; }
+      this.paint();
+    };
     const observer = new ResizeObserver(() => {
-      if (this.board.clientWidth !== this.layoutWidth || this.board.clientHeight !== this.layoutHeight) this.paint();
+      if (this.board.clientWidth !== this.layoutWidth || this.board.clientHeight !== this.layoutHeight) resize();
     });
     observer.observe(this.board);
-    const resize = () => this.paint();
     window.addEventListener("resize", resize);
     this.events.once("shutdown", () => {
       observer.disconnect();
@@ -82,7 +121,7 @@ export class CardTable extends Phaser.Scene {
     const previous = this.state;
     this.state = state;
     this.speed = speed;
-    if (this.art) this.paint(previous, animate);
+    if (this.art) { this.recycling = false; this.resizePending = false; this.paint(previous, animate); }
   }
 
   setLocked(locked: boolean): void {
@@ -97,17 +136,34 @@ export class CardTable extends Phaser.Scene {
     this.painting = true;
     try {
       this.tweens.killAll();
+      delete this.board.dataset.wildReel;
+      delete this.board.dataset.wildPhase;
       this.children.removeAll(true);
-      const { view, staged = [], back = 0, pickup = "sequential" } = this.state ?? {};
+      const { view, staged = [], back = 0 } = this.state ?? {};
       const stagedIds = new Set(staged.map(card => card.id));
       const committedIds = new Set(view?.queuedCards);
       const cards = (view?.hand ?? []).filter(card => !committedIds.has(card.id));
       const width = this.board.clientWidth;
       // Reserve the original slots while editing a play. Once committed, reserve
       // the final hand slots even when the server is still executing later groups.
-      const rows = groupHandRows(cards);
+      const targetCardWidth = this.state?.targetCardWidth ?? 240;
+      const maxRowSize = 8;
       const height = this.board.clientHeight;
       if (!width || !height) return;
+      const queued = view?.queuedCards ?? [];
+      const held = this.queuedSlots;
+      if (!queued.length) {
+        this.queuedSlots = undefined;
+      } else if (!held || held.round !== view!.round ||
+          !queued.every((id, index) => held.ids[held.ids.length - queued.length + index] === id)) {
+        const source = previous?.view.round === view!.round && queued.every((id, index) =>
+          previous.staged[previous.staged.length - queued.length + index]?.id === id) ? previous : this.state!;
+        this.queuedSlots = {
+          round: view!.round, ids: source.staged.map(card => card.id),
+          discardCount: source.view.visibleDiscard.length, playCount: source.staged.length,
+          playCapacity: source.playCapacity ?? source.view.visibleDiscard.length + source.staged.length,
+        };
+      }
       this.layoutWidth = width;
       this.layoutHeight = height;
       const density = Math.min(this.density, 4096 / Math.max(width, height));
@@ -117,57 +173,126 @@ export class CardTable extends Phaser.Scene {
         this.scale.resize(pixelWidth, pixelHeight);
       }
       this.cameras.main.setZoom(pixelWidth / width, pixelHeight / height);
-      const layout = tableLayout(width, height, rows.length);
-      const { pileY, pileHeight, pileWidth, stageY } = layout;
+      const layout = tableLayout(width, height, 1, view?.stockCount, maxRowSize,
+        view?.visibleDiscard.length, staged.length, this.state?.playCapacity,
+        this.queuedSlots && { ...this.queuedSlots, playedCount: this.queuedSlots.ids.length - queued.length });
+      const handLayout = committedIds.size
+        ? tableLayout(width, height, 1, view?.stockCount, maxRowSize, view?.visibleDiscard.length) : layout;
+      const plan = targetHandPlan(handLayout, cards, targetCardWidth, this.state?.keepGroupsTogether);
+      const rows = plan.rows;
+      const handSlots = plan.positions;
+      const largestCard = Math.max(layout.pileWidth, ...handSlots.map(position => position.width));
+      const textureDensity = Math.min(Math.floor(4096 / ART_HEIGHT),
+        Math.ceil(this.density * Math.max(1, largestCard / ART_WIDTH)));
+      if (textureDensity !== this.textureDensity) {
+        this.art.destroy();
+        this.textureDensity = textureDensity;
+        this.art = new CardTextures(this.textures, this.images, textureDensity);
+      }
+      const { pileY, pileHeight } = layout;
       this.board.style.setProperty("--turn-split", pileY + pileHeight * .53 + "px");
-      this.board.style.setProperty("--notice-y", stageY + "px");
-      const stock = at(layout.stockLeft, pileY, pileWidth);
+      this.board.style.setProperty("--notice-y", handLayout.noticeY + "px");
+      const bounds = this.board.getBoundingClientRect();
+      this.board.style.setProperty("--pile-center-x", bounds.left + width / 2 + "px");
+      this.board.style.setProperty("--pile-center-y", bounds.top + pileY + layout.stockHeight / 2 + "px");
+      this.board.style.setProperty("--pile-row-height", layout.stockHeight + "px");
+      this.board.style.setProperty("--pile-row-width", width + "px");
+      const stock = layout.piles.stock;
       this.drawFelt(layout, width);
+      this.updateHandMask(layout, pixelWidth, pixelHeight);
 
       if (!view) return;
 
-      const backTexture = this.art.back(back);
+      this.positionButton(this.replayButton, replayPosition(layout));
+      this.positionButton(this.automaticPanel, automaticActionPosition(layout));
+      this.automaticPanel.style.setProperty("--automatic-card-width", layout.pileWidth + "px");
+      this.replayButton.hidden = staged.length > 0 && !this.state?.replaying;
+      const reshuffling = animate && !!previous && previous.view.round === view.round &&
+        previous.view.revision !== view.revision && !!view.event?.reshuffles?.length;
+      const oldPpc = view.event?.reshuffles?.[0]?.pointsBefore ?? view.pointsPerCard;
+      const backTexture = reshuffling ? this.art.rollBack(back, oldPpc, oldPpc, 1) : this.art.back(back, view.pointsPerCard);
       const priorPositions = this.priorCardPositions;
+      const priorShades = this.priorCardShades;
+      const priorFlights = this.stagingFlights;
       this.priorCardPositions = new Map();
-      this.drawStock(stock, view.stockCount, backTexture);
+      this.priorCardShades = new Map();
+      this.stagingFlights = new Set();
       const motion = animate && previous?.view.revision !== view.revision;
       const stagingChanged = animate && !!previous &&
         (staged.length !== previous.staged.length || staged.some((card, index) => card.id !== previous.staged[index]?.id));
+      const adjusting = stagingChanged || animate && (previous?.targetCardWidth !== targetCardWidth ||
+        previous?.keepGroupsTogether !== this.state?.keepGroupsTogether ||
+        previous?.dimUnplayable !== this.state?.dimUnplayable);
       const initialDeal = motion && !view.event;
       const priorRound = previous?.view.round === view.round && view.event !== null ? previous.view : undefined;
       const enemy = opponentPositions(layout, width, view.opponentCount);
-      this.drawOpponent(enemy, backTexture, stock, drawTimeline(view, otherSeat(view.seat), pickup), initialDeal,
-        motion && priorRound ? opponentPositions(layout, width, priorRound.opponentCount) : undefined);
-      this.drawDiscard(view, layout, width, stock, priorPositions, motion ? priorRound : undefined);
-
-      const stagedTargets = playPositions(layout, staged.length).map((position, index) => {
-        const card = staged[index]!;
-        const from = priorPositions.get(card.id);
-        const depth = 2 + index / PLAY_SLOTS;
-        const image = this.drawImage(this.art.face(card), position).setDepth(depth);
-        this.priorCardPositions.set(card.id, position);
-        if (stagingChanged && from) {
-          const fromHand = !previous.staged.some(item => item.id === card.id);
-          if (fromHand) image.setDepth(208);
-          this.placeImage(image, from);
-          this.priorCardPositions.set(card.id, from);
-          this.tween(STAGE_FLIGHT, t => {
-            const current = between(from, position, t, fromHand ? 16 : 0);
-            this.placeImage(image, current);
-            this.priorCardPositions.set(card.id, current);
-          }, () => image.setDepth(depth));
-        }
-        return { card, position, staged: true };
+      this.opponentButton.hidden = !enemy.length;
+      if (enemy.length) this.positionButton(this.opponentButton, {
+        x: enemy[0]!.x, y: 0, width: enemy.at(-1)!.x + enemy.at(-1)!.width - enemy[0]!.x,
+        clipHeight: layout.opponentVisible,
       });
-      const handTargets = handPositions(layout, rows).map((position, index) => ({
-        card: cards[index]!, position, staged: false,
-      })).filter(({ card }) => !stagedIds.has(card.id));
-      const draw = drawTimeline(view, view.seat, pickup);
-      const played = motion && !!priorRound && view.event?.kind === "play" && view.event.seat === view.seat;
+      const oldEnemy = motion && priorRound ? opponentPositions(layout, width, priorRound.opponentCount) : undefined;
+      const opponentPlayed = motion && view.event?.kind === "play" && view.event.seat !== view.seat;
+      const playing = motion && priorRound && view.event?.kind === "play";
+      const stagedCommit = !!playing && view.event?.seat === view.seat && committedFromPlay(view.visibleDiscard, previous);
+      // Keep the deck and collapse anchor at their actual on-screen positions.
+      // Only restore the final layout after the new play has covered the old one.
+      const appendedStock = playing ? this.priorStockPosition ?? stock : undefined;
+      const collapseAnchor = playing ? priorPositions.get(priorRound.visibleDiscard[0]!.id) : undefined;
+      const phases = appendedStock ? playPhases(stagedCommit,
+        !samePosition(appendedStock, stock) || !samePosition(collapseAnchor, layout.piles.discard[0]!), opponentWildPlay(view)) : undefined;
+      const drawingSeat = view.event?.kind === "draw" ? view.event.seat : view.event?.penalty?.seat ?? view.seat;
+      const shuffleDraw = reshuffling ? drawTimeline(view, drawingSeat) : undefined;
+      this.drawStock(stock, view.stockCount, backTexture, layout, adjusting, appendedStock, phases,
+        shuffleDraw, view.event?.kind === "shuffle" ? 0 : previous?.view.stockCount, back);
+      this.drawDiscard(view, layout, stock, priorPositions, oldEnemy, adjusting, phases,
+        motion && priorRound ? previous : undefined);
+      this.drawOpponent(enemy, backTexture, stock, drawTimeline(view, otherSeat(view.seat)), initialDeal, opponentPlayed, oldEnemy);
+
+      const stagedTargets = layout.piles.play.map((position, index) => {
+        const card = staged[index]!;
+        const depth = CARD_DEPTH.play + index;
+        return { card, position, dimmed: false, staged: true, depth };
+      });
+      const legal = new Set(view.legalLeads);
+      const last = staged.at(-1);
+      const handActive = view.turn === view.seat && !view.result && !view.queuedCards.length;
+      const canStage = handActive && staged.length < PLAY_SLOTS;
+      const handTargets = handSlots.map((position, index) => {
+        const card = cards[index]!;
+        const playable = canStage && (last ? canFollowInQueue(card, last) : legal.has(card.id));
+        return { card, position, dimmed: !!this.state?.dimUnplayable && handActive && !playable, staged: false, depth: CARD_DEPTH.hand + index };
+      }).filter(({ card }) => !stagedIds.has(card.id));
+      const buttons = this.placeTargets(stagedTargets, handTargets, view);
+      for (const { card, position, depth } of stagedTargets) {
+        const from = priorPositions.get(card.id);
+        const image = this.drawImage(this.art.face(card), position, depth);
+        const button = buttons.get(card.id)!;
+        this.priorCardPositions.set(card.id, position);
+        if (adjusting && from) {
+          const inFlight = priorFlights.has(card.id) || !previous?.staged.some(item => item.id === card.id);
+          if (inFlight) { image.setDepth(CARD_DEPTH.staging + depth - CARD_DEPTH.play); this.stagingFlights.add(card.id); }
+          const move = (t: number) => this.positionButton(button,
+            this.moveCard(image, from, position, t, card.id, inFlight ? 16 : 0));
+          move(0);
+          this.tween(STAGE_FLIGHT, move, () => { image.setDepth(depth); this.stagingFlights.delete(card.id); });
+        }
+      }
+      const draw = drawTimeline(view, view.seat);
       const movingDraw = motion && !!priorRound && draw.count > 0;
-      this.drawHand(handTargets, staged, view, width, height, stock, priorPositions,
-        movingDraw || stagingChanged || played, initialDeal, movingDraw ? draw : undefined);
-      this.placeTargets(stagedTargets, handTargets, view);
+      this.drawHand(handTargets, buttons, view, stock, priorPositions, priorShades, motion, adjusting, initialDeal,
+        movingDraw ? draw : undefined);
+      if (reshuffling) {
+        this.recycling = true;
+        const ready = handReadinessTimeline(view);
+        this.tween(ready.start + ready.duration, () => {}, () => {
+          this.recycling = false;
+          if (this.resizePending) {
+            this.resizePending = false;
+            queueMicrotask(() => this.paint());
+          }
+        });
+      }
     } finally {
       this.painting = false;
     }
@@ -175,7 +300,7 @@ export class CardTable extends Phaser.Scene {
 
   private drawFelt(layout: Layout, width: number): void {
     const { pileY, pileHeight } = layout;
-    const felt = this.add.graphics();
+    const felt = this.add.graphics().setDepth(-1);
     const middle = pileY + pileHeight / 2;
     felt.lineStyle(1, 0xf4db9c, .12);
     felt.strokeEllipse(width / 2, middle, width * .88, pileHeight + 41);
@@ -183,180 +308,303 @@ export class CardTable extends Phaser.Scene {
     felt.strokeEllipse(width / 2, middle, width * .94, pileHeight + 58);
   }
 
-  private drawStock(deck: CardPosition, count: number, texture: string): void {
-    const visible = count ? Math.min(4, 1 + Math.ceil(count / 13)) : 1;
+  private updateHandMask(layout: Layout, pixelWidth: number, pixelHeight: number): void {
+    this.handEdge = layout.tableWidth - layout.inset;
+    this.handBottom = layout.tableHeight - layout.inset;
+    const mask = document.createElement("canvas");
+    mask.width = pixelWidth;
+    mask.height = pixelHeight;
+    const ctx = mask.getContext("2d")!;
+    ctx.scale(pixelWidth / layout.tableWidth, pixelHeight / layout.tableHeight);
+    // Start above the card stroke and align to physical pixels: fractional
+    // mask edges must not leave an unmasked hairline across the right margin.
+    const pixelScaleY = pixelHeight / layout.tableHeight;
+    const maskTop = Math.max(0, Math.floor((layout.handY - 2) * pixelScaleY) / pixelScaleY);
+    ctx.fillStyle = "white";
+    ctx.fillRect(0, 0, layout.tableWidth, maskTop);
+    ctx.fillRect(0, maskTop, this.handEdge - HAND_FADE_WIDTH, layout.tableHeight);
+    const fade = ctx.createLinearGradient(this.handEdge - HAND_FADE_WIDTH, 0, this.handEdge, 0);
+    fade.addColorStop(0, "rgba(255,255,255,1)");
+    fade.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = fade;
+    ctx.fillRect(this.handEdge - HAND_FADE_WIDTH, maskTop, HAND_FADE_WIDTH, layout.tableHeight);
+    // Multiply the existing right fade by the bottom fade, including their corner.
+    const bottomFade = ctx.createLinearGradient(0, this.handBottom - HAND_FADE_WIDTH, 0, this.handBottom);
+    bottomFade.addColorStop(0, "rgba(255,255,255,1)");
+    bottomFade.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.globalCompositeOperation = "destination-in";
+    ctx.fillStyle = bottomFade;
+    ctx.fillRect(0, 0, layout.tableWidth, layout.tableHeight);
+    // Mask the already-composited canvas only within the hand region. Piles and
+    // opponent cards are above it; flights cross this fixed boundary smoothly.
+    // CSS compositing supports both Phaser's WebGL and Canvas renderers without
+    // reparenting cards or changing their existing global depth ordering.
+    const canvas = this.game.canvas;
+    canvas.style.maskImage = `url(${mask.toDataURL()})`;
+    canvas.style.maskSize = "100% 100%";
+    canvas.style.maskRepeat = "no-repeat";
+  }
+
+  private drawStock(
+    deck: CardPosition, count: number, texture: string, layout: Layout, adjusting: boolean,
+    appended?: CardPosition, phases?: PlayPhases, draw?: DrawTimeline, beforeCount = count, back = 0,
+  ): void {
+    const visible = draw ? 4 : stockLayerCount(count);
+    const images: CardImage[] = [];
     for (let index = visible - 1; index >= 0; index--) {
-      this.drawImage(texture, { ...deck, x: deck.x + index * 2, y: deck.y + index * 2 })
-        .setAlpha(count ? 1 : .62);
+      images[index] = this.drawImage(texture, deck, CARD_DEPTH.stock + visible - index - 1);
     }
-    this.positionButton(this.stockButton, { ...deck, clipWidth: deck.width + 6, clipHeight: artHeight(deck.width) + 6 });
+    const place = (position: CardPosition, stockCount = draw ? beforeCount : count) => {
+      const step = 2 * position.width / layout.basePileWidth;
+      const layers = stockLayerCount(stockCount);
+      images.forEach((image, index) => {
+        this.placeImage(image, { ...position, x: position.x + index * step, y: position.y + index * step });
+        image.setDepth(CARD_DEPTH.stock + visible - index - 1).setVisible(index < layers).setAlpha(stockCount ? 1 : .62);
+      });
+      this.positionButton(this.stockButton, { ...position, clipWidth: position.width + (layers - 1) * step,
+        clipHeight: artHeight(position.width) + (layers - 1) * step });
+      this.priorStockPosition = position;
+    };
+    const from = this.priorStockPosition;
+    place(from && (adjusting || appended) ? from : deck);
+    if (from && appended && phases) {
+      this.tween(phases.total, progress => {
+        const elapsed = progress * phases.total;
+        place(elapsed < phases.flight ? between(from, appended, ease(elapsed / phases.flight)) :
+          between(appended, deck, ease(unit((elapsed - phases.returnStart) / Math.max(1, phases.total - phases.returnStart)))));
+      }, undefined, 0, "Linear");
+    } else if (from && adjusting && !samePosition(from, deck)) {
+      this.tween(STAGE_FLIGHT, t => place(between(from, deck, t)));
+    }
+    if (!draw?.shuffles.length) return;
+    let stamp = "";
+    const points = (old: number, next: number, progress = 1) => {
+      const nextStamp = `${old}:${next}:${progress}`;
+      if (stamp !== nextStamp) { this.art.rollBack(back, old, next, progress); stamp = nextStamp; }
+    };
+    const span = draw.total - draw.start;
+    this.tween(span, progress => {
+      const elapsed = draw.start + progress * span;
+      const current = draw.shuffles.find(shuffle => elapsed >= shuffle.start && elapsed < shuffle.start + shuffle.duration);
+      if (current) {
+        const frame = shuffleFrame(elapsed - current.start, deck, layout.piles.discard[0]!, 2 * deck.width / layout.basePileWidth);
+        this.board.dataset.shuffleStage = frame.stage;
+        this.board.dataset.shuffleCycle = String(frame.cycle);
+        place(deck, 52);
+        frame.cards.forEach(({position, depth, visible}, index) => {
+          this.placeImage(images[index]!, position);
+          images[index]!.setDepth(CARD_DEPTH.stock + depth).setVisible(visible).setAlpha(1);
+        });
+        if (frame.stage === "points" || frame.stage === "pause") points(current.pointsBefore, current.pointsAfter, frame.pointProgress);
+        else points(current.pointsBefore, current.pointsBefore);
+      } else {
+        const completed = draw.shuffles.filter(shuffle => elapsed >= shuffle.start + shuffle.duration);
+        const drawn = draw.cardStarts.filter(start => elapsed >= start + draw.duration + draw.reveal).length;
+        place(deck, beforeCount + completed.reduce((sum, shuffle) => sum + shuffle.stockCount, 0) - drawn);
+        const value = completed.at(-1)?.pointsAfter ?? draw.shuffles[0]!.pointsBefore;
+        points(value, value);
+        delete this.board.dataset.shuffleStage;
+        delete this.board.dataset.shuffleCycle;
+      }
+    }, () => {
+      place(deck, count);
+      delete this.board.dataset.shuffleStage;
+      delete this.board.dataset.shuffleCycle;
+    }, draw.start, "Linear");
   }
 
   private drawOpponent(
     enemy: CardPosition[], texture: string, stock: CardPosition,
-    draw: ReturnType<typeof drawTimeline>, initialDeal: boolean, previous?: CardPosition[],
+    draw: DrawTimeline, initialDeal: boolean, played: boolean, previous?: CardPosition[],
   ): void {
+    const arrivals: Arrival[] = [];
     enemy.forEach((position, index) => {
-      const image = this.drawImage(texture, position);
+      const image = this.drawImage(texture, position, CARD_DEPTH.opponent + index);
+      const from = previous?.[index];
       if (initialDeal) {
-        this.fly(image, stock, position, OPPONENT_DEAL);
-      } else if (previous && draw.count) {
-        const drawIndex = index - (enemy.length - draw.count);
-        const from = previous[index];
-        if (drawIndex >= 0) {
-          const delay = draw.start + (draw.sequential ? draw.reflow + drawIndex * draw.duration : 0);
-          this.fly(image, stock, position, draw.duration, delay);
-        } else if (from && from.x !== position.x) {
-          this.placeImage(image, from);
-          this.tween(draw.duration, t => this.placeImage(image, between(from, position, t)), undefined, draw.start);
-        }
+        this.deal(image, stock, position, OPPONENT_DEAL);
+      } else if (previous && draw.count > 0 && index >= enemy.length - draw.count) {
+        arrivals.push({ image, position });
+      } else if (from && (draw.count > 0 || played) && !samePosition(from, position)) {
+        this.placeImage(image, from);
+        this.tween(played ? PLAY_FLIGHT : draw.duration,
+          t => this.moveCard(image, from, position, t), undefined, draw.cardStarts[0] ?? draw.start);
       }
     });
+    this.animateDraws(arrivals, stock, draw);
   }
 
   private drawDiscard(
-    view: TableView, layout: Layout, width: number, stock: CardPosition,
-    previousPositions: Map<number, CardPosition>, previous?: TableView,
+    view: TableView, layout: Layout, stock: CardPosition,
+    previousPositions: Map<number, CardPosition>, opponent: CardPosition[] | undefined,
+    adjusting: boolean, phases: PlayPhases | undefined, previous?: BoardState,
   ): void {
+    const width = layout.tableWidth;
     const last = view.visibleDiscard;
-    const targets = discardPositions(layout, width, last.length);
-    const eventsArePlays = previous && view.event?.kind === "play";
-    const old = eventsArePlays ? previous.visibleDiscard : [];
-    const prior = discardPositions(layout, width, old.length);
+    const targets = layout.piles.discard;
+    const old = view.event?.kind === "play" ? previous?.view.visibleDiscard ?? [] : [];
+    const firstTarget = targets[0]!;
     const lastTarget = targets.at(-1)!;
     this.positionButton(this.discardButton, {
-      ...targets[0]!, clipWidth: lastTarget.x - targets[0]!.x + lastTarget.width,
+      ...firstTarget, clipWidth: lastTarget.x - firstTarget.x + lastTarget.width,
     });
     if (!old.length) {
-      last.forEach((card, index) => this.drawImage(this.art.face(card), targets[index]!));
+      last.forEach((card, index) => {
+        const target = targets[index]!;
+        const from = previousPositions.get(card.id);
+        const image = this.drawImage(this.art.face(card), target, CARD_DEPTH.discard + index);
+        this.priorCardPositions.set(card.id, target);
+        if (adjusting && from && !samePosition(from, target)) {
+          this.moveCard(image, from, target, 0, card.id);
+          this.tween(STAGE_FLIGHT, t => this.moveCard(image, from, target, t, card.id));
+        }
+      });
       return;
     }
 
-    const combined = discardPositions(layout, width, old.length + last.length);
-    const outgoing = old.map((card, index) => this.drawImage(this.art.face(card), prior[index]!).setDepth(210 + index));
-    const opponent = opponentPositions(layout, width, Math.max(previous?.opponentCount ?? 0, last.length));
+    const fallback = collapsePlayPositions(targets[0]!, old.length);
+    const prior = old.map((card, index) => previousPositions.get(card.id) ?? fallback[index]!);
+    const landing = playLandingPositions(prior, last.length);
+    const outgoing = old.map((card, index) =>
+      this.drawImage(this.art.face(card), prior[index]!, CARD_DEPTH.discard + index));
+    const playerPlayed = view.event!.seat === view.seat;
+    const alreadyQueued = playerPlayed && committedFromPlay(last, previous);
+    const outgoingTargets = prior;
+    const timing = phases ?? playPhases(alreadyQueued, false, opponentWildPlay(view));
+    const anchor = outgoingTargets[0]!;
+    const collapsedPositions = collapsePlayPositions(anchor, last.length);
     const incoming = last.map((card, index) => {
-      const from = view.event!.seat === view.seat
-        ? previousPositions.get(card.id) ?? at((width - layout.handWidth) / 2, layout.stageY, layout.handWidth)
-        : opponent[opponent.length - last.length + index] ?? stock;
-      const image = this.drawImage(this.art.face(card), from).setDepth(220 + index);
-      return { image, from, appended: combined[old.length + index]!, target: targets[index]! };
+      const enemyIndex = Math.max(0, (opponent?.length ?? 0) - last.length + index);
+      const from = playerPlayed ? previousPositions.get(card.id) ?? at((width - layout.handWidth) / 2, layout.handY, layout.handWidth)
+        : opponent?.[enemyIndex] ?? stock;
+      const depth = playerPlayed ? CARD_DEPTH.staging + PLAY_SLOTS + index : CARD_DEPTH.opponent + enemyIndex;
+      const reel = !playerPlayed && index === last.length - 1 && card.special === "wild"
+        ? wildReel(card.suit, card.calledSuit ?? card.suit, Math.random, wildSuitOptions(previous!.view.activeSuit, last.length)) : undefined;
+      const image = this.drawImage(this.art.face(card, reel ? { suits: reel, progress: 0 } : undefined), from, depth);
+      this.priorCardPositions.set(card.id, from);
+      const collapsed = collapsedPositions[index]!;
+      return { image, from, appended: alreadyQueued ? from : landing[index]!, collapsed, target: targets[index]!, id: card.id, card, reel };
     });
 
-    this.tween(PLAY_FLIGHT, t => {
-      const spread = Math.min(t * 2, 1);
-      outgoing.forEach((image, index) =>
-        this.placeImage(image, between(prior[index]!, combined[index]!, spread)));
-      incoming.forEach(({ image, from, appended }, index) => {
-        const flight = Math.max(0, Math.min(1, (t - index * .055) / .835));
-        this.placeImage(image, between(from, appended, flight, 18));
-      });
-    }, () => this.tween(PLAY_SLIDE, t => {
+    let landed = false;
+    let soundedStop = 0;
+    if (incoming.some(card => card.reel)) this.board.dataset.wildReel = String(last.at(-1)!.id);
+    this.tween(timing.total, progress => {
+      const elapsed = progress * timing.total;
+      for (const { card, reel } of incoming) if (reel) {
+        const progress = unit(elapsed / timing.reelEnd);
+        this.art.face(card, { suits: reel, progress });
+        const stop = wildReelStop(reel, progress);
+        if (stop > soundedStop) { soundedStop = stop; this.controls.suitBling?.(); }
+      }
+      if (incoming.some(card => card.reel)) this.board.dataset.wildPhase = elapsed < timing.flight ? "flight" : elapsed < timing.reelEnd ? "hold" : "slide";
+      if (elapsed < timing.flight) {
+        const flight = ease(elapsed / timing.flight);
+        const spread = unit(flight * 2);
+        outgoing.forEach((image, index) => this.moveCard(image, prior[index]!, outgoingTargets[index]!, spread));
+        incoming.forEach(({ image, from, appended, id }, index) => {
+          this.moveCard(image, from, appended, unit((flight - index * .055) / .835), id, alreadyQueued ? 0 : 18);
+        });
+        return;
+      }
+
+      if (!landed) {
+        landed = true;
+        incoming.forEach(({ image }, index) => image.setDepth(CARD_DEPTH.discard + old.length + index));
+      }
+      const slide = ease(unit((elapsed - timing.collapseStart) / (timing.collapseEnd - timing.collapseStart)));
+      const restore = ease(unit((elapsed - timing.returnStart) / Math.max(1, timing.total - timing.returnStart)));
       outgoing.forEach((image, index) => {
-        const start = combined[index]!;
-        image.setPosition(lerp(start.x, layout.discardLeft, t), start.y)
-          .setScale(this.textureScale(start.width) * (1 - t), this.textureScale(start.width))
-          .setAlpha(1 - t * t);
+        const start = outgoingTargets[index]!;
+        const collapsed = { ...start, x: anchor.x };
+        this.placeImage(image, elapsed < timing.returnStart ? { ...start, x: lerp(start.x, anchor.x, slide) }
+          : between(collapsed, targets[0]!, restore));
       });
-      incoming.forEach(({ image, appended, target }) => this.placeImage(image, between(appended, target, t)));
-    }, () => outgoing.forEach(image => image.destroy()), PLAY_HOLD));
+      incoming.forEach(({ image, appended, collapsed, target, id }) =>
+        elapsed < timing.returnStart ? this.moveCard(image, appended, collapsed, slide, id) :
+          this.moveCard(image, collapsed, target, restore, id));
+    }, () => {
+      delete this.board.dataset.wildReel;
+      delete this.board.dataset.wildPhase;
+      outgoing.forEach(image => image.destroy());
+      incoming.forEach(({ image }, index) => image.setDepth(CARD_DEPTH.discard + index));
+    }, 0, "Linear");
   }
 
   private drawHand(
-    targets: CardTarget[], staged: Card[], view: TableView, width: number, height: number,
-    stock: CardPosition, previousPositions: Map<number, CardPosition>, moving: boolean, initialDeal: boolean,
-    draw?: ReturnType<typeof drawTimeline>,
+    targets: CardTarget[], buttons: Map<number, HTMLButtonElement>, view: TableView,
+    stock: CardPosition, previousPositions: Map<number, CardPosition>, previousShades: Map<number, number>, motion: boolean,
+    stagingChanged: boolean, initialDeal: boolean, draw?: DrawTimeline,
   ): void {
-    const legal = new Set(view.legalLeads);
-    const last = staged.at(-1);
-    const tracks = targets.map(({ card, position }, index) => {
-      const playable = view.turn === view.seat && !view.queuedCards.length && staged.length < PLAY_SLOTS &&
-        (last ? canFollowInQueue(card, last) : legal.has(card.id));
-      const depth = 12 + index * 2;
-      const texture = this.art.face(card);
-      const image = this.drawImage(texture, position).setDepth(depth);
-      const mark = playable ? this.add.graphics().setDepth(depth + 1) : undefined;
-      if (mark) {
-        const width = position.width;
-        const height = artHeight(width);
-        const radius = width * 13 / ART_WIDTH;
-        mark.lineStyle(9, 0xffc036, .23).strokeRoundedRect(.5, .5, width - 1, height - 1, radius);
-        mark.lineStyle(5, 0xffd34d, .50).strokeRoundedRect(.5, .5, width - 1, height - 1, radius);
-        mark.lineStyle(2, 0xffe873, 1).strokeRoundedRect(.5, .5, width - 1, height - 1, radius);
-        mark.setPosition(position.x, position.y).setVisible(!initialDeal);
-      }
-      if (initialDeal) this.fly(image, stock, position, HAND_DEAL, 0,
-        () => mark?.setVisible(true));
+    const ready = handReadinessTimeline(view);
+    const drawOrder = new Map(draw ? view.event?.drawnCards?.map((id, index) => [id, index]) : []);
+    const arrivals: Arrival[] = [];
+    for (const { card, position, dimmed, depth } of targets) {
+      const image = this.drawImage(this.art.face(card), position, depth);
+      const button = buttons.get(card.id)!;
       this.priorCardPositions.set(card.id, position);
-      return { image, texture, mark, position, previous: previousPositions.get(card.id), index };
-    });
-    if (!moving || tracks.every(track => samePosition(track.previous, track.position))) return;
-
-    const back = this.art.back(this.state!.back);
-    if (draw?.sequential) {
-      const order = view.event?.drawnCards ?? [];
-      const arrivals = tracks.filter(track => !track.previous)
-        .sort((a, b) => order.indexOf(targets[a.index]!.card.id) - order.indexOf(targets[b.index]!.card.id));
-      arrivals.forEach((track, index) => {
-        const { image, mark, position, texture } = track;
-        const card = targets[track.index]!.card;
-        const depth = image.depth;
-        image.setDepth(11).setTexture(back).setVisible(false);
-        mark?.setVisible(false);
-        this.placeImage(image, stock);
-        this.priorCardPositions.set(card.id, stock);
-        this.tween(draw.duration, t => {
-          image.setVisible(true);
-          if (t >= .36 && image.texture.key !== texture) image.setTexture(texture);
-          const current = between(stock, position, t, 14);
-          this.placeImage(image, current);
-          this.priorCardPositions.set(card.id, current);
-        }, () => {
-          image.setDepth(depth);
-          mark?.setVisible(true);
-        }, draw.start + draw.reflow + index * draw.duration);
-      });
-    }
-    const motion = tracks.filter(track => !draw?.sequential || track.previous).map(track => {
-      const corner = this.add.image(0, 0, track.texture).setOrigin(0)
-        .setCrop(0, 0, CORNER_WIDTH * this.textureDensity, CORNER_HEIGHT * this.textureDensity)
-        .setDepth(320 + track.index);
-      return { ...track, corner, from: track.previous ?? stock };
-    });
-    // Existing cards reserve their corner rectangles before any card arriving from the stock.
-    const priority = motion.slice().sort((a, b) => Number(!a.previous) - Number(!b.previous));
-    const frame = (t: number) => {
-      const desired = priority.map(track => between(track.from, track.position, t, track.previous ? 0 : 14));
-      const positions = keepCornersVisible(desired.filter((_, index) => priority[index]!.previous || t >= .28), width, height);
-      let nextFace = 0;
-      priority.forEach((track, index) => {
-        const showFace = !!track.previous || t >= .28;
-        const position = showFace ? positions?.[nextFace++] ?? track.position : desired[index]!;
-        const texture = showFace ? track.texture : back;
-        if (track.image.texture.key !== texture) track.image.setTexture(texture);
-        this.placeImage(track.image, position);
-        this.priorCardPositions.set(targets[track.index]!.card.id, position);
-        track.corner.setVisible(showFace).setPosition(position.x, position.y).setScale(this.textureScale(position.width));
-        track.mark?.setVisible(t > .85 || samePosition(track.previous, track.position))
-          .setPosition(position.x, position.y).setScale(position.width / track.position.width);
-      });
-    };
-    frame(0);
-    this.tween(HAND_DRAW, frame, () => {
-      for (const track of motion) {
-        this.placeImage(track.image, track.position);
-        this.priorCardPositions.set(targets[track.index]!.card.id, track.position);
-        track.mark?.setVisible(true).setPosition(track.position.x, track.position.y).setScale(1);
-        track.corner.destroy();
+      this.positionButton(button, position);
+      const move = (from: CardPosition, to: CardPosition, t: number) =>
+        this.positionButton(button, this.moveCard(image, from, to, t, card.id));
+      const drawIndex = drawOrder.get(card.id);
+      const from = previousPositions.get(card.id);
+      if (initialDeal) {
+        this.deal(image, stock, position, HAND_DEAL);
+      } else if (drawIndex !== undefined) {
+        arrivals[drawIndex] = { image, position, id: card.id };
+      } else if ((motion || stagingChanged) && from && !samePosition(from, position)) {
+        move(from, position, 0);
+        const duration = motion ? Math.min(HAND_DRAW, ready.start) : STAGE_FLIGHT;
+        this.tween(duration, t => move(from, position, t), undefined, draw?.cardStarts[0] ?? draw?.start);
       }
-    }, draw?.start ?? 0);
+      const shade = (value: number) => {
+        image.setPaperShade(value);
+        this.priorCardShades.set(card.id, value);
+      };
+      const targetShade = dimmed ? 1 : 0;
+      const previousShade = previousShades.get(card.id) ?? 0;
+      if (motion) {
+        shade(previousShade);
+        if (ready.start > 0 && previousShade > 0) {
+          this.tween(Math.min(HAND_DRAW, ready.start), t => shade(lerp(previousShade, 0, t)));
+        } else shade(0);
+        if (ready.duration && dimmed) {
+          this.tween(ready.duration, t => shade(t), undefined, ready.start);
+        }
+      } else if (stagingChanged && previousShade !== targetShade) {
+        shade(previousShade);
+        this.tween(STAGE_FLIGHT, t => shade(lerp(previousShade, targetShade, t)));
+      } else {
+        shade(targetShade);
+      }
+    }
+    if (draw) this.animateDraws(arrivals, stock, draw);
+  }
+
+  private animateDraws(arrivals: Arrival[], stock: CardPosition, draw: DrawTimeline): void {
+    if (!arrivals.length) return;
+    arrivals.forEach(({ image, position, id }, index) => {
+      this.moveCard(image, stock, position, 0, id);
+      image.setVisible(draw.cardStarts[index] === 0);
+    });
+
+    const span = draw.total - draw.start;
+    this.tween(span, progress => {
+      const elapsed = progress * span;
+      arrivals.forEach(({ image, position, id }, index) => {
+        const age = elapsed + draw.start - draw.cardStarts[index]!;
+        if (age < 0) return;
+        image.setVisible(true);
+        this.moveCard(image, stock, position, ease(unit((age - draw.reveal) / draw.duration)), id, 14);
+      });
+    }, undefined, draw.start, "Linear");
   }
 
   private cardsEnabled(view: TableView): boolean {
     return !this.state?.locked && view.turn === view.seat && !view.result && !view.queuedCards.length;
   }
 
-  private placeTargets(staged: CardTarget[], hand: CardTarget[], view: TableView): void {
+  private placeTargets(staged: CardTarget[], hand: CardTarget[], view: TableView): Map<number, HTMLButtonElement> {
     const activeId = (document.activeElement as HTMLElement | null)?.dataset.cardId;
     const enabled = this.cardsEnabled(view);
     const targets = [...staged, ...hand].map(({ card, position, staged }) => {
@@ -365,6 +613,7 @@ export class CardTable extends Phaser.Scene {
       button.setAttribute("aria-label", describeCard(card));
       button.setAttribute("aria-pressed", String(staged));
       button.dataset.cardId = String(card.id);
+      if (!staged) button.dataset.handCard = "true";
       button.disabled = !enabled;
       this.bindCardGesture(button, card.id, staged);
       this.positionButton(button, position);
@@ -372,10 +621,10 @@ export class CardTable extends Phaser.Scene {
     });
     this.cardTargets.replaceChildren(...targets);
     if (activeId && enabled) targets.find(button => button.dataset.cardId === activeId)?.focus({ preventScroll: true });
+    return new Map(targets.map(button => [Number(button.dataset.cardId), button]));
   }
 
   private bindCardGesture(button: HTMLButtonElement, id: number, staged: boolean): void {
-    const isFlick = staged ? isVerticalFlick : isUpwardFlick;
     let start: { x: number; y: number; time: number; pointer: number } | undefined;
     let suppressClick = false;
     button.onpointerdown = event => {
@@ -389,13 +638,13 @@ export class CardTable extends Phaser.Scene {
       if (!start || start.pointer !== event.pointerId) return;
       const dx = event.clientX - start.x;
       const dy = event.clientY - start.y;
-      const flick = isFlick(dx, dy, event.timeStamp - start.time);
+      const elapsed = event.timeStamp - start.time;
+      const gesture = staged ? queuedCardFlick(dx, dy, elapsed) : undefined;
+      const flick = !staged && isUpwardFlick(dx, dy, elapsed);
       start = undefined;
       suppressClick = Math.hypot(dx, dy) > 12;
-      if (flick && staged) {
-        if (dy < 0) this.controls.playQueue();
-        else this.controls.clearPlay();
-      }
+      if (gesture === "play") this.controls.playQueue();
+      else if (gesture === "clear") this.controls.clearPlay();
       else if (flick) this.controls.flickCard(id);
     };
     button.onclick = event => {
@@ -403,20 +652,22 @@ export class CardTable extends Phaser.Scene {
     };
   }
 
-  private positionButton(button: HTMLButtonElement, position: CardPosition): void {
+  private positionButton(button: HTMLElement, position: CardPosition): void {
     button.style.left = position.x + "px";
     button.style.top = position.y + "px";
-    button.style.width = (position.clipWidth ?? position.width) + "px";
-    button.style.height = (position.clipHeight ?? artHeight(position.width)) + "px";
+    const visibleWidth = button.dataset.handCard ? Math.max(0, this.handEdge - HAND_FADE_WIDTH - position.x) : Infinity;
+    button.style.width = Math.min(position.clipWidth ?? position.width, visibleWidth) + "px";
+    const visibleHeight = button.dataset.handCard ? Math.max(0, this.handBottom - HAND_FADE_WIDTH - position.y) : Infinity;
+    button.style.height = Math.min(position.clipHeight ?? artHeight(position.width), visibleHeight) + "px";
   }
 
-  private drawImage(texture: string, position: CardPosition): Image {
-    const image = this.add.image(position.x, position.y, texture).setOrigin(0);
+  private drawImage(texture: string | FaceTexture, position: CardPosition, depth: number): CardImage {
+    const image = new CardImage(this, texture).setDepth(depth);
     this.placeImage(image, position);
     return image;
   }
 
-  private placeImage(image: Image, position: CardPosition): void {
+  private placeImage(image: CardImage, position: CardPosition): void {
     const scale = this.textureScale(position.width);
     image.setPosition(position.x, position.y).setScale(scale).setCrop(0, 0,
       (position.clipWidth ?? position.width) / scale, (position.clipHeight ?? artHeight(position.width)) / scale);
@@ -426,19 +677,26 @@ export class CardTable extends Phaser.Scene {
     return width / (ART_WIDTH * this.textureDensity);
   }
 
-  private fly(image: Image, from: CardPosition, to: CardPosition, duration: number, delay = 0, done?: () => void): void {
+  private moveCard(image: CardImage, from: CardPosition, to: CardPosition, t: number, id?: number, lift = 0): CardPosition {
+    const position = t === 1 ? to : between(from, to, t, lift);
+    this.placeImage(image, position);
+    if (id !== undefined) this.priorCardPositions.set(id, position);
+    return position;
+  }
+
+  private deal(image: CardImage, from: CardPosition, to: CardPosition, duration: number): void {
     this.placeImage(image, from);
     image.setAlpha(0);
     this.tween(duration, t => {
-      this.placeImage(image, between(from, to, t, 11));
+      this.moveCard(image, from, to, t, undefined, 11);
       image.setAlpha(Math.min(1, t * 9));
-    }, done, delay);
+    });
   }
 
-  private tween(duration: number, frame: (t: number) => void, done?: () => void, delay = 0): void {
+  private tween(duration: number, frame: (t: number) => void, done?: () => void, delay = 0, easing = "Sine.InOut"): void {
     const progress = { t: 0 };
     this.tweens.add({
-      targets: progress, t: 1, duration: duration / this.speed, delay: delay / this.speed, ease: "Sine.InOut",
+      targets: progress, t: 1, duration: duration / this.speed, delay: delay / this.speed, ease: easing,
       onUpdate: () => frame(progress.t),
       onComplete: () => { frame(1); done?.(); },
     });

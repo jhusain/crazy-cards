@@ -3,6 +3,9 @@
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <link rel="manifest" href="./manifest.webmanifest">
+    <link rel="apple-touch-icon" href="./icons/icon-192.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="theme-color" content="#151c19">
     <meta name="description" content="Play the original Crazy Eights computer opponent at a touch-first card table.">
     <title>Crazy Eights</title>
@@ -14,14 +17,16 @@
           <span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span>
         </button>
         <div class="scoreboard" aria-label="Scoreboard">
-          <div class="score-player"><span>You</span><strong id="your-score">0</strong></div>
-          <div class="round" id="round-number">Round 1</div>
+          <div class="score-player"><span id="player-name">You</span><strong id="your-score">0</strong></div>
+          <div class="round" id="round-number" aria-label="Round 1 of 3">1/3</div>
           <div class="score-player cpu-score"><strong id="cpu-score">0</strong><span>Computer</span></div>
         </div>
         <div id="game-menu" class="game-menu" popover aria-label="Game menu">
+          <button id="install-app" hidden>Install Crazy Eights</button>
+          <button id="restart-button" aria-haspopup="dialog">New Match</button>
           <button id="open-rules" aria-haspopup="dialog">Rules</button>
-          <button id="open-deck" aria-haspopup="dialog">Deck art</button>
           <button id="open-settings" aria-haspopup="dialog">Settings</button>
+          <div id="debug-controls" hidden><label class="menu-check"><input id="debug-autoplay" type="checkbox" disabled> Autoplay</label></div>
         </div>
       </header>
 
@@ -30,81 +35,139 @@
         <div class="turn-light player-light" aria-hidden="true"></div>
         <div id="board" class="board"></div>
         <div class="board-overlay">
-          <button class="table-background" id="table-background" aria-label="Draw a card" disabled></button>
-          <button class="card-target" id="stock-pile" aria-label="Draw from the deck" disabled></button>
+          <div class="table-background" id="table-background" aria-hidden="true"></div>
+          <button class="card-target" id="stock-pile" aria-describedby="deck-value" aria-label="Draw from the deck" disabled></button>
           <button class="card-target" id="discard-pile" aria-label="Discard pile" disabled></button>
+          <button class="card-target opponent-target" id="opponent-hand" aria-label="Opponent’s hand. Double-tap to toggle debug mode" hidden></button>
+          <span id="deck-value" class="visually-hidden">1 point per card</span>
           <div id="card-targets"></div>
+          <div id="debug-toast" class="debug-toast" role="status" aria-live="polite" hidden></div>
           <div id="table-notice" class="table-notice" hidden>
             <p id="notice-text"></p>
-            <button id="next-round" class="quiet" hidden>Next round</button>
+          </div>
+          <div id="automatic-action" class="automatic-action" role="dialog" aria-modal="false" aria-labelledby="automatic-title" hidden>
+            <p id="automatic-title">PASS</p>
+            <button id="cancel-automatic" aria-label="Cancel automatic action">
+              <svg viewBox="0 0 100 100" aria-hidden="true">
+                <circle class="automatic-track" cx="50" cy="50" r="43"/>
+                <circle id="automatic-progress" cx="50" cy="50" r="43" pathLength="1"/>
+                <path d="m35 35 30 30m0-30L35 65"/>
+              </svg>
+            </button>
+            <span id="automatic-message" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></span>
           </div>
           <p id="table-status" class="visually-hidden" aria-live="polite">Dealing cards…</p>
         </div>
-        <div class="table-actions">
-          <button class="quiet" id="replay-button" disabled>Instant Replay</button>
-          <button class="quiet" id="restart-button" aria-haspopup="dialog">Reset Match</button>
-        </div>
+        <button class="quiet replay-control" id="replay-button" aria-label="Instant Replay" title="Instant Replay" disabled hidden>
+          <svg class="replay-icon" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+            <path d="M26 11a11 11 0 1 0 0 10" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+            <path d="m26 5 1 7-7-1" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M13 10.5 22 16l-9 5.5Z" fill="currentColor"/>
+          </svg>
+          <svg class="fast-forward-icon" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+            <path d="M5 8v16l11-8Zm12 0v16l11-8Z" fill="currentColor"/>
+          </svg>
+        </button>
+
+        <dialog id="suit-dialog" class="choice-dialog" aria-labelledby="suit-title">
+          <div class="dialog-heading"><h2 id="suit-title">Call a suit</h2><button class="quiet" data-close>Cancel</button></div>
+          <div id="suit-buttons" class="suit-buttons"></div>
+        </dialog>
       </section>
       <button type="button" id="menu-shield" class="menu-shield" aria-label="Close game menu"></button>
       <button type="button" id="replay-shield" class="replay-shield" aria-label="Stop instant replay" hidden></button>
     </main>
+    <dialog id="feedback-dialog">
+      <h2>Sound and vibration</h2>
+      <p>Allow countdown ticks and wild-card suit chimes? When sound is off, use a short vibration instead. You can change both in Settings.</p>
+      <button id="allow-feedback">Enable</button>
+      <button id="decline-feedback">Not now</button>
+    </dialog>
 
     <dialog id="rules-dialog" aria-labelledby="rules-title">
       <div class="dialog-heading"><h2 id="rules-title">House rules</h2><button class="quiet" data-close>Close</button></div>
       <ul class="rules-list">
-        <li>Tap a card to queue it. Flick a matching card up from your hand to play it immediately when it has no card that can follow it. Tap the <b>discard pile</b> or flick any queued card up to play the queue. Flick any queued card down to clear the queue.</li>
+        <li>Add <b>?debug=true</b> to the URL, or double-tap the opponent’s cards, to toggle debug mode. In debug mode, tap an empty discard play to let the AI take your turn, or enable <b>Autoplay</b> in the menu to control your seat automatically. Opening the menu pauses autoplay.</li>
+        <li>Tap a card to add it to your play. Flick it up to play its whole rank group immediately. In Settings you can stage a flicked eight or two when others of the same rank remain in your hand. Tap the <b>discard pile</b> or swipe any queued card up or left to play the queue. Flick any queued card down to clear the queue.</li>
         <li><b>Eights</b> are wild. A single eight must call a different suit. With multiple eights, the last eight can call any suit.</li>
+        <li>Your queued play sits to the right of the last play, separated by a gap. Tap the last play or swipe a queued card up or left to play it. Tap a queued card to return it to your hand; flick down to clear the queue.</li>
         <li><b>Aces and jacks</b> skip the opponent. <b>Twos</b> make them draw two per card in the stack, and the <b>queen of spades</b> makes them draw five. A special effect can be covered by an ordinary card in the combo. After an ace or jack, you can queue another play that matches the suit of the last card.</li>
-        <li>Tap the table or deck to clear a queue or draw. After drawing, tap the table or either pile to pass. The table draws for you when you have no legal play and passes if you still can’t play.</li>
-        <li>On your turn, tap <b>Instant Replay</b> to see the last sequence at half speed, including your draw and current queue. Tap anywhere to return to the game.</li>
-        <li>Going out only wins when your turn comes back. If you both go out, the round is a tie. The winner gains one point for each card the other player has left, and the loser gives up that many points.</li>
+        <li>Tap the deck to clear a queue or draw. After drawing, tap either pile to pass. Tapping the table does nothing. The table draws for you when you have no legal play and passes if you still can’t play.</li>
+        <li>On your turn, with no cards queued, tap the <b>Instant Replay</b> icon to see the last sequence at half speed, including forced draws and passes when you could not play. Tap anywhere or use the fast-forward icon to return to the game.</li>
+        <li>Going out only wins when your turn comes back. If you both go out, the round is a tie. The deck shows the points per card: reshuffling the discard doubles it. A tie doubles the next round’s starting value; a decisive round resets the next round’s starting value to one. The winner gains the current points per card for each opposing card left, and the loser gives up the same number. A match ends after three decisive rounds; the higher total score wins.</li>
       </ul>
     </dialog>
-    <dialog id="suit-dialog" aria-labelledby="suit-title">
-      <div class="dialog-heading"><h2 id="suit-title">Call a suit</h2><button class="quiet" data-close>Cancel</button></div>
-      <div id="suit-buttons" class="suit-buttons"></div>
-    </dialog>
-    <dialog id="deck-dialog" aria-labelledby="deck-title">
-      <div class="dialog-heading"><h2 id="deck-title">Deck art</h2><button class="quiet" data-close>Close</button></div>
-      <div id="deck-options" class="deck-options"></div>
+    <dialog id="round-dialog" class="choice-dialog" aria-labelledby="round-title" aria-describedby="round-points match-rounds">
+      <div class="dialog-heading"><h2 id="round-title"></h2></div>
+      <div class="round-summary">
+        <div><p id="round-points"></p><p id="match-rounds" hidden></p></div>
+        <button id="next-round" class="action primary" autofocus>Next round</button>
+      </div>
     </dialog>
     <dialog id="settings-dialog" aria-labelledby="settings-title">
       <div class="dialog-heading"><h2 id="settings-title">Settings</h2><button class="quiet" data-close>Close</button></div>
       <div class="settings-controls">
         <div class="setting">
           <label for="animation-speed">Animation speed</label>
-          <output id="animation-speed-value" for="animation-speed">1×</output>
-          <input id="animation-speed" type="range" min="0" max="15" step="1" value="10" aria-valuetext="1×">
+          <output id="animation-speed-value" for="animation-speed">0.7×</output>
+          <input id="animation-speed" type="range" min="0" max="15" step="1" value="7" aria-valuetext="0.7×">
         </div>
         <div class="setting">
           <label for="ai-pause">Pause between computer plays</label>
-          <output id="ai-pause-value" for="ai-pause">1 s</output>
-          <input id="ai-pause" type="range" min="1" max="3" step="0.25" value="1" aria-valuetext="1 second">
-        </div>
-        <div class="setting">
-          <label for="pickup-animation">Pick up Card Animation</label>
-          <select id="pickup-animation">
-            <option value="sequential">Sequential</option>
-            <option value="concurrent">Concurrent</option>
-          </select>
+          <output id="ai-pause-value" for="ai-pause">1.5 s</output>
+          <input id="ai-pause" type="range" min="1" max="3" step="0.25" value="1.5" aria-valuetext="1.5 seconds">
         </div>
         <div class="setting">
           <label class="setting-check"><input id="danger-warning" type="checkbox" checked> Show danger warning</label>
         </div>
-        <div class="setting">
-          <label class="setting-check"><input id="always-play-wild" type="checkbox"> Always play wild card on flick</label>
-        </div>
-        <div class="setting">
+        <div id="danger-threshold-setting" class="setting child-settings">
           <label for="danger-threshold">Danger Warning Threshold</label>
           <output id="danger-threshold-value" for="danger-threshold">1 card</output>
           <input id="danger-threshold" type="range" min="0" max="5" step="1" value="1" aria-valuetext="1 card">
         </div>
+        <div class="setting">
+          <label for="target-card-width">Target width per card</label>
+          <output id="target-card-width-value" for="target-card-width">240 dpi</output>
+          <input id="target-card-width" type="range" min="40" max="1000" step="10" value="240" aria-valuetext="240 dpi">
+        </div>
+        <div class="setting">
+          <label class="setting-check"><input id="keep-groups-together" type="checkbox" checked> Do not split groups across rows in the hand</label>
+        </div>
+        <div class="setting">
+          <label class="setting-check"><input id="dim-unplayable" type="checkbox"> Dim cards which can not be played</label>
+        </div>
+        <fieldset class="flick-settings">
+          <legend>Flick settings</legend>
+          <label class="setting-check"><input id="group-except-wild" type="checkbox" checked> Flicks stage wild cards if there are others in the hand</label>
+          <label class="setting-check"><input id="group-except-two" type="checkbox" checked> Flicks stage 2's if there are others in the hand</label>
+        </fieldset>
+        <fieldset class="flick-settings automatic-settings">
+          <legend>Automatic actions</legend>
+          <label class="setting-check"><input id="sound-enabled" type="checkbox"> Sound</label>
+          <label class="setting-check"><input id="vibration-enabled" type="checkbox"> Countdown vibration when sound is off</label>
+          <button id="enable-feedback" type="button">Enable sound and vibration</button>
+          <label class="setting-check"><input id="auto-pass" type="checkbox"> Autopass after drawing a card that can't be played</label>
+          <label class="setting-check"><input id="auto-pickup" type="checkbox"> Auto pickup</label>
+          <label class="setting-check"><input id="auto-single" type="checkbox"> Autoplay only eligible card</label>
+          <div id="auto-single-options" class="child-settings" hidden>
+            <label class="setting-check"><input id="auto-single-exclude-wild" type="checkbox"> Exclude Wildcards, unless it's the last card</label>
+            <label class="setting-check"><input id="auto-single-exclude-two" type="checkbox"> Exclude twos unless it's the last card, or the top card is a two</label>
+            <label class="setting-check"><input id="auto-single-exclude-queen" type="checkbox"> Exclude Queen of Spades, unless it's the last card</label>
+            <label class="setting-check"><input id="auto-single-skips" type="checkbox"> Play any eligible single skip turn cards of the same suit first</label>
+          </div>
+          <div class="setting">
+            <label for="automatic-delay">Allow cancel of automatic actions until…</label>
+            <output id="automatic-delay-value" for="automatic-delay">3 s</output>
+            <input id="automatic-delay" type="range" min="1" max="10" step="1" value="3" aria-valuetext="3 seconds">
+          </div>
+        </fieldset>
+
       </div>
     </dialog>
     <dialog id="restart-dialog" aria-labelledby="restart-title">
-      <div class="dialog-heading"><h2 id="restart-title">Reset match?</h2><button class="quiet" data-close>Cancel</button></div>
+      <div class="dialog-heading"><h2 id="restart-title">Start a new match?</h2><button class="quiet" data-close>Cancel</button></div>
       <p>The score will reset and a new round will be dealt.</p>
-      <button class="action primary" id="confirm-restart">Reset Match</button>
+      <button class="action primary" id="confirm-restart">New Match</button>
     </dialog>
     <script type="module" src="/src/main.ts"></script>
   </body>

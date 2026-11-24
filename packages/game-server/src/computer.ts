@@ -25,29 +25,57 @@ export function sortHand(hand: Card[]): Card[] {
 }
 
 export function sortPlayerHand(hand: Card[]): Card[] {
-  const groups = new Map<number, Card[]>();
-  for (const card of sortHand(hand)) {
-    const group = groups.get(card.rank);
-    if (group) group.push(card);
-    else groups.set(card.rank, [card]);
-  }
+  const ordered = sortHand(hand);
+  const rankCounts = new Map<number, number>();
+  for (const card of ordered) rankCounts.set(card.rank, (rankCounts.get(card.rank) ?? 0) + 1);
 
-  const ordered = [...groups.values()];
-  const singleSkips = ordered.filter(group => group.length === 1 && skipsOpponent(group[0]!));
-  for (const single of singleSkips) {
-    const suit = single[0]!.suit;
-    let target: Card[] | undefined;
-    for (let size = 1; size <= 4 && !target; size++) {
-      target = ordered.find(group => group.length === size &&
-        !group.some(skipsOpponent) && group.some(card => card.suit === suit));
-    }
-    if (!target) continue;
-    const index = target.findIndex(card => card.suit === suit);
-    target.unshift(...target.splice(index, 1));
-    ordered.splice(ordered.indexOf(single), 1);
-    ordered.splice(ordered.indexOf(target), 0, single);
+  // A complete ordinary rank can precede a lone wild; multiple wilds stay first.
+  if (ordered.filter(card => card.special === "wild").length === 1) {
+    const quads = ordered.filter(card => rankCounts.get(card.rank) === 4 &&
+      ordered.filter(member => member.rank === card.rank).every(member => member.special === "normal"));
+    ordered.splice(0, ordered.length, ...quads, ...ordered.filter(card => !quads.includes(card)));
   }
-  return ordered.flat();
+  const singleSkips = new Set(ordered.filter(card => rankCounts.get(card.rank) === 1 && skipsOpponent(card)));
+  for (const skip of [...singleSkips].reverse()) {
+    if (!singleSkips.has(skip)) continue;
+    // Prefer joining the tail of the other skip rank before ordinary hugging.
+    const skipGroup = ordered.findLast(card => skipsOpponent(card) && card.rank !== skip.rank &&
+      card.suit === skip.suit && rankCounts.get(card.rank)! > 1);
+    if (skipGroup) {
+      ordered.splice(ordered.indexOf(skipGroup), 1);
+      ordered.splice(ordered.findLastIndex(card => card.rank === skipGroup.rank) + 1, 0, skipGroup);
+      ordered.splice(ordered.indexOf(skip), 1);
+      ordered.splice(ordered.indexOf(skipGroup) + 1, 0, skip);
+      singleSkips.delete(skip);
+      continue;
+    }
+    const matchesSuit = (card: Card) => card.suit === skip.suit && card.special !== "wild" && !skipsOpponent(card);
+    const adjacentSkip = (card: Card | undefined) => !!card && card.suit === skip.suit && singleSkips.has(card);
+    let first = ordered.indexOf(skip);
+    let end = first + 1;
+    while (adjacentSkip(ordered[first - 1])) first--;
+    while (adjacentSkip(ordered[end])) end++;
+    for (const card of ordered.slice(first, end)) singleSkips.delete(card);
+
+    let target = -1;
+    for (let size = 1; size <= 4 && target < 0; size++) {
+      target = ordered.findLastIndex(card => matchesSuit(card) && rankCounts.get(card.rank) === size);
+    }
+    if (target < 0) continue;
+
+    while (target + 1 < ordered.length && matchesSuit(ordered[target + 1]!)) target++;
+
+    const anchor = ordered[target]!;
+    while (ordered[target - 1]?.rank === anchor.rank) {
+      ordered[target] = ordered[target - 1]!;
+      ordered[target - 1] = anchor;
+      target--;
+    }
+
+    const run = ordered.splice(first, end - first);
+    ordered.splice(ordered.indexOf(anchor), 0, ...run);
+  }
+  return ordered;
 }
 
 function preferredSuit(hand: Card[], excluded: Suit): Suit {

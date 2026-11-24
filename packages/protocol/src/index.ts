@@ -15,11 +15,13 @@ export interface PlayedCard extends Card {
 }
 
 export type RoundEnd = { winner: Seat | "tie"; points: number };
+export type MatchEnd = RoundEnd & { roundsWon: [number, number] };
+export const MATCH_ROUNDS = 3;
 export const PLAY_SLOTS = 12;
 export type PlayMove = { type: "play"; cards: number[]; suit?: Suit };
 export type Move = PlayMove | { type: "draw" } | { type: "pass" };
 export type Command = Move | { type: "play-queue"; cards: number[]; suit?: Suit }
-  | { type: "snapshot" } | { type: "next-round" } | { type: "restart" };
+  | { type: "snapshot" } | { type: "next-round" } | { type: "restart" } | { type: "auto-play" } | { type: "debug-reshuffle" };
 
 export interface Request {
   requestId: number;
@@ -27,13 +29,21 @@ export interface Request {
   command: Command;
 }
 
+export interface DeckReshuffle {
+  drawIndex: number;
+  stockCount: number;
+  pointsBefore: number;
+  pointsAfter: number;
+}
+
 export interface TurnEvent {
   seat: Seat;
-  kind: "play" | "draw" | "pass";
+  kind: "play" | "draw" | "pass" | "shuffle";
   cards?: PlayedCard[];
   drawCount?: number;
   drawnCards?: number[];
   skips?: boolean;
+  reshuffles?: DeckReshuffle[];
   penalty?: { seat: Seat; count: number };
 }
 
@@ -43,6 +53,9 @@ export interface TableView {
   seat: Seat;
   turn: Seat | null;
   points: [number, number];
+  pointsPerCard: number;
+  roundsWon: [number, number];
+  matchResult: MatchEnd | null;
   hand: Card[];
   opponentCount: number;
   stockCount: number;

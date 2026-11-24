@@ -1,0 +1,28 @@
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { runInNewContext } from 'node:vm';
+const root=new URL('../dist/',import.meta.url);
+const manifest=JSON.parse(await readFile(new URL('manifest.webmanifest',root),'utf8'));
+assert.equal(manifest.display,'standalone');
+for(const icon of manifest.icons)assert((await readFile(new URL(icon.src,root))).length>100);
+const html=await readFile(new URL('index.html',root),'utf8');
+assert(html.includes('manifest.webmanifest'));
+const handlers={}, stores=new Map();
+let offline=false;
+const base='https://game.test/';
+const key=value=>new URL(typeof value==='string'?value:value.url,base).href;
+const cache={put:async(k,v)=>stores.set(key(k),v),match:async k=>stores.get(key(k))?.clone()};
+const self={location:{href:base+'sw.js',origin:'https://game.test'},addEventListener:(name,fn)=>handlers[name]=fn,skipWaiting:async()=>{},clients:{claim:async()=>{}}};
+const fetch=async value=>{
+ if(offline)throw new Error('Offline');
+ const url=new URL(key(value));
+ const name=url.pathname==='/'?'index.html':url.pathname.slice(1);
+ return new Response(await readFile(new URL(name,root)));
+};
+runInNewContext(await readFile(new URL('sw.js',root),'utf8'),{self,fetch,URL,Response,caches:{open:async()=>cache,keys:async()=>[],delete:async()=>true}});
+let waiting;handlers.install({waitUntil:p=>waiting=p});await waiting;
+assert.equal(stores.size,5);
+offline=true;let response;handlers.fetch({request:{method:'GET',url:base,mode:'navigate'},respondWith:p=>response=p});
+assert.equal(await (await response).text(),html);
+handlers.fetch({request:{method:'GET',url:base+'signin-with-chatgpt',mode:'navigate'},respondWith:()=>assert.fail('Do not intercept authentication')});
+console.log('PWA manifest, icons, offline install/cache and authentication isolation passed');

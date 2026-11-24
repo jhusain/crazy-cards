@@ -23,6 +23,7 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+      - run: node scripts/check-pwa.mjs
       - name: Update gh-pages
         env:
           SOURCE_COMMIT: ${{ github.sha }}
@@ -39,16 +40,16 @@ jobs:
           fi
           trap 'git worktree remove --force "$target"' EXIT
           git -C "$target" rm -r --ignore-unmatch .
-          cp dist/index.html "$target/index.html"
+          cp -a dist/. "$target/"
           touch "$target/.nojekyll"
-          git -C "$target" add index.html .nojekyll
+          git -C "$target" add --all
           if ! git -C "$target" diff --cached --quiet; then
             git -C "$target" -c user.name='github-actions[bot]' \
               -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
               commit -m "Build ${SOURCE_COMMIT}"
             git -C "$target" push origin HEAD:refs/heads/gh-pages
           fi
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v4
         with:
           path: dist
 
@@ -63,5 +64,6 @@ jobs:
       name: github-pages
       url: ${{ steps.pages.outputs.page_url }}
     steps:
+      - uses: actions/configure-pages@v5
       - uses: actions/deploy-pages@v5
         id: pages

@@ -1,11 +1,16 @@
 import Phaser from "phaser";
+import { CountdownFeedback, countdownBeat } from "./feedback.ts";
+import { setupPwa } from "./pwa.ts";
 import {
-  PLAY_SLOTS, canFollowInQueue, otherSeat, skipsOpponent, wildSuitOptions,
+  PLAY_SLOTS, canFollowInQueue, otherSeat, wildSuitOptions,
   type Card, type Command, type Request, type Response, type Suit, type TableView,
 } from "@crazy-eights/protocol";
 import { DECKS, SUIT_SYMBOL, loadCardArt, suitLabel } from "./cards.ts";
-import { shouldPlayFlick } from "./card-gesture.ts";
+import { guaranteedSkipFinish, flickPlay, orderFlickGroup } from "./card-gesture.ts";
+import { AutomaticActions, type AutomaticAction } from "./automatic-actions.ts";
 import { OpponentReplay } from "./opponent-replay.ts";
+import { roundProgress } from "./round-progress.ts";
+import { isDebug } from "./play-mode.ts";
 import { ANIMATION_SPEEDS, DEFAULT_SETTINGS, readSettings, type GameSettings } from "./settings.ts";
 import { CardTable } from "./table.ts";
 import { replayDelay, replaySpeed, STAGE_FLIGHT, tableAnimationTime, type TableTiming } from "./table-timing.ts";
@@ -24,12 +29,15 @@ const status = element("table-status");
 const notice = element("table-notice");
 const noticeText = element("notice-text");
 const nextRound = element<HTMLButtonElement>("next-round");
+const automaticPanel = element("automatic-action");
 const stockPile = element<HTMLButtonElement>("stock-pile");
-const tableBackground = element<HTMLButtonElement>("table-background");
 const discardPile = element<HTMLButtonElement>("discard-pile");
+const opponentHand = element<HTMLButtonElement>("opponent-hand");
+const autoplayCheck = element<HTMLInputElement>("debug-autoplay");
+let toastTimer: ReturnType<typeof setTimeout> | undefined;
 const suitDialog = element<HTMLDialogElement>("suit-dialog");
+const roundDialog = element<HTMLDialogElement>("round-dialog");
 const rulesDialog = element<HTMLDialogElement>("rules-dialog");
-const deckDialog = element<HTMLDialogElement>("deck-dialog");
 const settingsDialog = element<HTMLDialogElement>("settings-dialog");
 const restartDialog = element<HTMLDialogElement>("restart-dialog");
 const replayButton = element<HTMLButtonElement>("replay-button");
@@ -38,23 +46,52 @@ const menu = element("game-menu");
 const menuShield = element<HTMLButtonElement>("menu-shield");
 const replayShield = element<HTMLButtonElement>("replay-shield");
 const history = new OpponentReplay();
+const automaticActions = new AutomaticActions();
+const feedback = new CountdownFeedback(message => {
+  if (!debug) return;
+  const toast = element("debug-toast");
+  toast.textContent = message;
+  toast.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { toast.hidden = true; }, 2200);
+});
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 const settingsKey = "crazy-eights-settings";
+let debug = isDebug(window.location.search);
+let autoplay = false;
 let settings: GameSettings = { ...DEFAULT_SETTINGS };
 let replaying = false;
 let replayController: AbortController | undefined;
 let animationTimer: ReturnType<typeof setTimeout> | undefined;
 let view: TableView | undefined;
 let staged: Card[] = [];
+let playCapacity = 0;
 let deckBack = 0;
 let busy: number | undefined;
+let pendingCommand: Command | undefined;
+let automaticFrame: number | undefined;
+let automaticSession: { revision: number; action: AutomaticAction } | undefined;
+let canceledAutomaticRevision: number | undefined;
 let requestId = 0;
 let message: string | undefined;
 let worker: Worker | undefined;
 let scene: CardTable | undefined;
+let announcedResultRevision: number | undefined;
+let paintedRevision: number | undefined;
+let deckTapTimer: ReturnType<typeof setTimeout> | undefined;
+let lastDeckTap = { time: -Infinity, x: 0, y: 0 };
+
+function cancelDeckTap(): void {
+  clearTimeout(deckTapTimer);
+  deckTapTimer = undefined;
+  lastDeckTap.time = -Infinity;
+}
 
 function send(command: Command): number | undefined {
   if (busy !== undefined || !worker || replaying) return;
+  cancelDeckTap();
+  cancelAutomaticAction();
+  pendingCommand = command;
   const request: Request = { requestId: ++requestId, revision: view?.revision ?? 0, command };
   busy = request.requestId;
   message = undefined;
@@ -65,9 +102,11 @@ function send(command: Command): number | undefined {
 
 const isMyTurn = () => view !== undefined && view.turn === view.seat;
 const isQueued = () => !!view?.queuedCards.length;
+const shuffleLocked = () => !replaying && animationTimer !== undefined && !!view?.event?.reshuffles?.length;
 const inputReady = () => !replaying && busy === undefined && animationTimer === undefined;
-const canUseStock = () => inputReady() && isMyTurn() && !isQueued();
-const canUseDiscard = () => inputReady() && (!!view?.result || isMyTurn() && !isQueued() && (staged.length > 0 || !!view?.drewThisTurn));
+const canUseStock = () => !autoplay && inputReady() && isMyTurn() && !isQueued();
+const canDebugShuffle = () => debug && !!view && !view.result && inputReady() && !isQueued();
+const canUseDiscard = () => !autoplay && inputReady() && (!!view?.result || isMyTurn() && !isQueued() && (staged.length > 0 || !!view?.drewThisTurn || debug));
 const canReplay = () => canUseStock() && !!view?.legalLeads.length && !!history.last;
 
 function validQueue(cards: Card[], snapshot: TableView): Card[] {
@@ -83,6 +122,7 @@ function validQueue(cards: Card[], snapshot: TableView): Card[] {
 
 function tapCard(id: number): void {
   if (!view || !canUseStock()) return;
+  cancelAutomaticAction();
   const index = staged.findIndex(card => card.id === id);
   message = undefined;
   if (index !== -1) {
@@ -102,6 +142,7 @@ function tapCard(id: number): void {
       staged.push(card);
     }
   }
+  playCapacity = staged.length ? Math.max(playCapacity, view.visibleDiscard.length + staged.length) : 0;
   render(true);
 }
 
@@ -109,27 +150,31 @@ function flickCard(id: number): void {
   if (!view || !canUseStock()) return;
   const card = view.hand.find(candidate => candidate.id === id);
   if (!card) return;
-  const direct = !staged.length && shouldPlayFlick(card, view.hand, view.legalLeads, settings.alwaysPlayWild);
-  if (direct && (view.opponentCount > 0 || skipsOpponent(card))) {
-    choosePlay([card], true);
-    return;
-  }
-  if (view.opponentCount === 0 && card.special !== "pickup" && card.special !== "super-pickup") {
-    const companions = view.hand.filter(other => other.rank === card.rank && other.id !== card.id &&
-      !staged.some(queued => queued.id === other.id));
-    const queue = validQueue([...staged, card], view);
-    if (queue.includes(card) && staged.length < PLAY_SLOTS) {
-      staged = [...queue, ...companions].slice(0, PLAY_SLOTS);
-      message = undefined;
-      render(true);
-    } else tapCard(id);
-  } else if (direct) choosePlay([card], true);
-  else tapCard(id);
+  const remaining = view.hand.filter(card => !staged.some(queued => queued.id === card.id));
+  const previous = staged.at(-1);
+  const legal = previous ? remaining.filter(card => canFollowInQueue(card, previous)).map(card => card.id) : view.legalLeads;
+  const play = flickPlay(card, remaining, legal, settings);
+  if (!play) { tapCard(id); return; }
+  const commit = (cards: Card[]) => {
+    if (!staged.length) { choosePlay(cards, true); return; }
+    const combined = [...staged, ...cards];
+    if (combined.length > PLAY_SLOTS) { message = "All 12 play slots are filled."; render(false); return; }
+    if (!view || validQueue(combined, view).length !== combined.length) return;
+    cancelAutomaticAction();
+    staged = combined;
+    playCapacity = Math.max(playCapacity, view.visibleDiscard.length + staged.length);
+    render(true);
+  };
+  if (play.length > 2 && !guaranteedSkipFinish(play, remaining) && card.special !== "wild" && (staged.length || view.opponentCount > 0)) {
+    chooseSuit(play.slice(1).map(member => member.suit), suit => commit(orderFlickGroup(play, suit)), "Choose suit");
+  } else commit(play);
 }
 
 function clearPlay(): void {
   if (!canUseStock() || !staged.length) return;
+  cancelAutomaticAction();
   staged = [];
+  playCapacity = 0;
   message = undefined;
   render(true);
 }
@@ -145,6 +190,7 @@ function drawOrPass(): void {
 
 function choosePlay(cards: Card[], direct = false): void {
   if (!view || !canUseStock() || !cards.length) return;
+  cancelAutomaticAction();
   const submit = (suit?: Suit) => {
     const command: Command = { type: direct ? "play" : "play-queue", cards: cards.map(card => card.id), ...(suit ? { suit } : {}) };
     send(command);
@@ -161,6 +207,12 @@ function choosePlay(cards: Card[], direct = false): void {
     submit(suits[0]);
     return;
   }
+  chooseSuit(suits, submit);
+}
+
+function chooseSuit(suits: readonly Suit[], submit: (suit: Suit) => void, title = "Call a suit"): void {
+  cancelAutomaticAction();
+  element("suit-title").textContent = title;
   const buttons = suits.map(suit => {
     const button = document.createElement("button");
     button.className = "suit-choice";
@@ -168,7 +220,8 @@ function choosePlay(cards: Card[], direct = false): void {
     const symbol = document.createElement("b");
     symbol.textContent = SUIT_SYMBOL[suit];
     symbol.setAttribute("aria-hidden", "true");
-    button.append(symbol, suitLabel(suit));
+    button.append(symbol);
+    button.setAttribute("aria-label", suitLabel(suit));
     button.onclick = () => {
       suitDialog.close();
       submit(suit);
@@ -177,45 +230,130 @@ function choosePlay(cards: Card[], direct = false): void {
   });
   element("suit-buttons").replaceChildren(...buttons);
   suitDialog.showModal();
+  const titleElement = element("suit-title");
+  titleElement.style.fontSize = "";
+  let size = parseFloat(getComputedStyle(titleElement).fontSize);
+  while (titleElement.scrollWidth > titleElement.clientWidth && size > 12) titleElement.style.fontSize = --size + "px";
 }
 
 function confirmPlay(): void {
   if (!view || !canUseDiscard()) return;
-  if (view.result) send({ type: "next-round" });
+  if (view.result) {
+    roundDialog.close();
+    send({ type: view.matchResult ? "restart" : "next-round" });
+  }
+  else if (!staged.length && debug) send({ type: "auto-play" });
   else if (!staged.length) send({ type: "pass" });
   else choosePlay(staged.slice());
 }
 
-function showNotice(text: string, result = false): void {
+function cancelAutomaticAction(suppress = true): void {
+  if (automaticFrame !== undefined) cancelAnimationFrame(automaticFrame);
+  automaticFrame = undefined;
+  automaticPanel.hidden = true;
+  automaticSession = undefined;
+  if (suppress) canceledAutomaticRevision = view?.revision;
+}
+
+function pauseAutomaticAction(): void {
+  if (automaticFrame !== undefined) cancelAnimationFrame(automaticFrame);
+  automaticFrame = undefined;
+  automaticPanel.hidden = true;
+}
+
+function automaticCandidate(): AutomaticAction | undefined {
+  const planned = automaticSession?.action.type === "play" ? automaticSession.action.cards : [];
+  const hasManualPlay = staged.length > 0 && (automaticSession?.revision !== view?.revision ||
+    staged.length !== planned.length || staged.some((card, index) => card.id !== planned[index]?.id));
+  if (autoplay || !view || !canUseStock() || hasManualPlay || menu.matches(":popover-open") ||
+      document.querySelector("dialog[open]") || canceledAutomaticRevision === view.revision) return;
+  return automaticActions.next(view, settings);
+}
+
+function startAutomaticAction(): void {
+  if (automaticFrame !== undefined) return;
+  const action = automaticCandidate();
+  if (!action || !view) return;
+  const revision = view.revision;
+  automaticSession = { revision, action };
+  if (action.type === "play" && !staged.length) {
+    staged = action.cards.slice();
+    playCapacity = view.visibleDiscard.length + staged.length;
+    render(true);
+  }
+  const verb = action.type === "pass" ? "PASS" : action.type === "draw" ? "DRAW" : "PLAY";
+  element("automatic-title").textContent = verb;
+  element("automatic-progress").style.strokeDashoffset = "1";
+  element("automatic-message").textContent = `${verb === "DRAW" ? "Drawing" : verb === "PASS" ? "Passing" : "Playing"} in ${settings.automaticDelayMs / 1000} seconds`;
+  automaticPanel.hidden = false;
+  // Start on the first painted frame, after the table and deck have settled.
+  let started: number | undefined;
+  let lastBeat = -1;
+  const update = (now: number) => {
+    const candidate = automaticCandidate();
+    if (revision !== view?.revision || candidate?.type !== action.type ||
+        action.type === "play" && (candidate.type !== "play" ||
+          candidate.cards.length !== action.cards.length || candidate.cards.some((card, index) => card.id !== action.cards[index]?.id))) { cancelAutomaticAction(false); return; }
+    started ??= now;
+    const elapsed = now - started;
+    const beat = countdownBeat(elapsed);
+    if (elapsed < settings.automaticDelayMs && beat !== lastBeat) { feedback.tick(); lastBeat = beat; }
+    const progress = Math.min(1, elapsed / settings.automaticDelayMs);
+    element("automatic-progress").style.strokeDashoffset = String(1 - progress);
+    const text = `${verb === "DRAW" ? "Drawing" : verb === "PASS" ? "Passing" : "Playing"} in ${Math.ceil((1 - progress) * settings.automaticDelayMs / 1000)} seconds`;
+    if (element("automatic-message").textContent !== text) element("automatic-message").textContent = text;
+    if (progress < 1) { automaticFrame = requestAnimationFrame(update); return; }
+    cancelAutomaticAction();
+    if (action.type === "play") choosePlay(action.cards);
+    else send({ type: action.type });
+  };
+  automaticFrame = requestAnimationFrame(update);
+}
+
+function showNotice(text: string): void {
   noticeText.textContent = text;
   notice.hidden = !text;
-  notice.toggleAttribute("data-result", result);
-  nextRound.hidden = !result;
 }
 
 function announce(): void {
   if (!view) return;
+  if (!view.result && roundDialog.open) roundDialog.close();
   if (message) {
     showNotice(message);
     status.textContent = message;
     return;
   }
   if (view.result) {
-    const result = view.result.winner === "tie" ? "Round tied" :
-      `${view.result.winner === view.seat ? "You win" : "Computer wins"} · +${view.result.points} points`;
-    showNotice(result, true);
-    status.textContent = result;
+    const result = view.matchResult ?? view.result;
+    const match = !!view.matchResult;
+    const title = result.winner === "tie" ? match ? "Match tied" : "Round tied" :
+      result.winner === view.seat ? match ? "You win the match" : "You win" : match ? "Computer wins the match" : "Computer wins";
+    const points = result.winner === "tie" ? match ? "0 points" : "No points awarded" :
+      `${match ? "" : "+"}${result.points} ${result.points === 1 ? "point" : "points"}`;
+    element("round-title").textContent = title;
+    element("round-points").textContent = points;
+    const wins = element("match-rounds");
+    wins.hidden = !match;
+    wins.textContent = `Rounds won\nYou ${view.roundsWon[view.seat]} · Computer ${view.roundsWon[otherSeat(view.seat)]}`;
+    showNotice("");
+    status.textContent = `${title}. ${points}`;
+    if (!animationTimer && announcedResultRevision !== view.revision) {
+      announcedResultRevision = view.revision;
+      for (const dialog of document.querySelectorAll<HTMLDialogElement>("dialog[open]")) dialog.close();
+      if (menu.matches(":popover-open")) menu.hidePopover();
+      roundDialog.showModal();
+    }
     return;
   }
   showNotice("");
-  const turn = isMyTurn() ? "Your turn" : "Computer’s turn";
+  const turn = isMyTurn() ? autoplay ? "Player AI’s turn" : "Your turn" : "Computer’s turn";
   const penalty = view.event?.penalty;
   if (isQueued()) {
     status.textContent = "Playing your queue";
   } else if (penalty?.count) {
-    status.textContent = `${penalty.seat === view.seat ? "You draw" : "Computer draws"} ${penalty.count}. ${turn}`;
-  } else if (isMyTurn() && !view.legalLeads.length) {
-    status.textContent = view.drewThisTurn ? "No playable cards. Passing." : "No playable cards. Drawing.";
+    status.textContent = `${penalty.seat === view.seat ? autoplay ? "Player AI draws" : "You draw" : "Computer draws"} ${penalty.count}. ${turn}`;
+  } else if (!autoplay && isMyTurn() && !view.legalLeads.length) {
+    status.textContent = view.drewThisTurn ? "No playable cards. Tap either pile to pass." : "No playable cards. Drawing.";
   } else {
     status.textContent = turn;
   }
@@ -223,18 +361,28 @@ function announce(): void {
 
 function updateControls(): void {
   const drew = view?.drewThisTurn && isMyTurn();
-  stockPile.disabled = !canUseStock();
-  tableBackground.disabled = stockPile.disabled;
+  stockPile.disabled = !canUseStock() && !canDebugShuffle();
   discardPile.disabled = !canUseDiscard();
   stockPile.setAttribute("aria-label", staged.length ? "Clear the queued cards"
     : drew ? "Pass your turn using the deck" : "Draw from the deck");
-  tableBackground.setAttribute("aria-label", staged.length ? "Clear play" : drew ? "Pass turn" : "Draw a card");
+  stockPile.title = debug ? "Double-tap to reshuffle earlier discards" : "";
   discardPile.setAttribute("aria-label", view?.result ? "Deal the next round" :
     staged.length ? `Play ${staged.length} queued ${staged.length === 1 ? "card" : "cards"}`
-      : drew ? "Pass your turn using the discard pile" : "Discard pile");
+      : debug && !autoplay ? "Play this turn using the AI" : drew ? "Pass your turn using the discard pile" : "Discard pile");
+  element("debug-controls").hidden = !debug;
+  autoplayCheck.disabled = !view || !!view.matchResult || shuffleLocked();
+  autoplayCheck.checked = autoplay;
+  element("player-name").textContent = autoplay ? "Player AI" : "You";
+  nextRound.textContent = view?.matchResult ? "New match" : "Next round";
   nextRound.disabled = !inputReady();
-  restartButton.disabled = replaying;
-  replayButton.disabled = !canReplay();
+  restartButton.disabled = replaying || shuffleLocked();
+  element<HTMLButtonElement>("open-rules").disabled = shuffleLocked();
+  opponentHand.disabled = shuffleLocked();
+  replayButton.disabled = !replaying && !canReplay();
+  replayButton.toggleAttribute("data-replaying", replaying);
+  const replayLabel = replaying ? "Skip to end of instant replay" : "Instant Replay";
+  replayButton.setAttribute("aria-label", replayLabel);
+  replayButton.title = replayLabel;
 }
 
 function showDanger(snapshot: TableView): void {
@@ -243,15 +391,26 @@ function showDanger(snapshot: TableView): void {
 }
 
 function showTable(snapshot: TableView, queue: Card[], animate: boolean, speed = settings.animationSpeed): void {
+  // Settings stay usable without repainting an in-flight shuffle or changing its speed.
+  if (!replaying && animationTimer !== undefined && snapshot.event?.reshuffles?.length && paintedRevision === snapshot.revision) return;
   const opponent = otherSeat(snapshot.seat);
-  element("round-number").textContent = `Round ${snapshot.round}`;
+  const rounds = roundProgress(snapshot);
+  element("round-number").textContent = `${rounds.current}/${rounds.total}`;
+  element("round-number").setAttribute("aria-label", `Round ${rounds.current} of ${rounds.total}`);
   element("your-score").textContent = String(snapshot.points[snapshot.seat]);
   element("cpu-score").textContent = String(snapshot.points[opponent]);
+  element("deck-value").textContent = `${snapshot.pointsPerCard} ${snapshot.pointsPerCard === 1 ? "point" : "points"} per card`;
   table.dataset.turnSide = snapshot.result ? "" : snapshot.turn === snapshot.seat ? "player" : "opponent";
   showDanger(snapshot);
   scene?.show({
-    view: snapshot, staged: queue, back: deckBack, locked: !inputReady(), pickup: settings.pickupAnimation,
+    view: snapshot, staged: queue, back: deckBack, locked: autoplay || !inputReady(),
+    keepGroupsTogether: settings.keepGroupsTogether,
+    targetCardWidth: settings.targetCardWidth,
+    dimUnplayable: settings.dimUnplayable,
+    replaying,
+    playCapacity: queue.length ? Math.max(playCapacity, snapshot.visibleDiscard.length + queue.length) : 0,
   }, animate && !reducedMotion.matches, speed);
+  paintedRevision = snapshot.revision;
   table.dataset.revision = String(snapshot.revision);
   table.dataset.turn = String(snapshot.turn ?? "finished");
 }
@@ -285,8 +444,8 @@ async function replayOpponent(): Promise<void> {
   const replay = history.last;
   const live = view;
   if (!live || !replay || !canReplay() || !worker) return;
+  cancelAutomaticAction();
   const queue = staged.slice();
-  const draw = history.voluntaryDraw?.after.revision === live.revision ? history.voluntaryDraw : undefined;
   const timing = tableTiming();
   const speed = replaySpeed(timing);
   const controller = new AbortController();
@@ -309,13 +468,7 @@ async function replayOpponent(): Promise<void> {
     }
     if (signal.aborted) return;
     const lastFrame = replay.frames.at(-1)!;
-    if (draw) {
-      if (lastFrame.revision !== draw.before.revision) showTable(draw.before, [], false);
-      showTable(draw.after, [], timing.animate, speed);
-      await replayWait(replayDelay(draw.after, timing, false), signal);
-    } else if (lastFrame.revision !== live.revision) {
-      showTable(live, [], false);
-    }
+    if (lastFrame.revision !== live.revision) showTable(live, [], false);
     if (!signal.aborted && queue.length) {
       showTable(live, queue, timing.animate, speed);
       await replayWait(timing.animate ? STAGE_FLIGHT / speed + 48 : 0, signal);
@@ -332,27 +485,40 @@ async function replayOpponent(): Promise<void> {
 
 function receive(response: Response): void {
   const acknowledged = response.requestId !== undefined && response.requestId === busy;
-  if (acknowledged) busy = undefined;
+  const command = acknowledged ? pendingCommand : undefined;
+  if (acknowledged) {
+    busy = undefined;
+    pendingCommand = undefined;
+  }
   const changed = view?.revision !== response.view.revision;
+  if (changed) {
+    cancelDeckTap();
+    cancelAutomaticAction(false);
+    canceledAutomaticRevision = undefined;
+  }
+  automaticActions.record(view, response.view, command);
   history.record(view, response.view);
   view = response.view;
   if (view.queuedCards.length) {
     staged = view.queuedCards.flatMap(id => view!.hand.filter(card => card.id === id));
-  } else if (changed && (!view.event || view.event.kind !== "draw" || view.event.seat !== view.seat || view.result)) {
+  } else if (changed && view.event?.kind !== "shuffle" && (!view.event || view.event.kind !== "draw" || view.event.seat !== view.seat || view.result)) {
     staged = [];
   }
+  if (!staged.length) playCapacity = 0;
   if (changed && !replaying) {
     clearTimeout(animationTimer);
     animationTimer = undefined;
-    const duration = tableAnimationTime(view, settings.animationSpeed, !reducedMotion.matches, settings.pickupAnimation);
+    const duration = tableAnimationTime(view, settings.animationSpeed, !reducedMotion.matches);
     if (duration) animationTimer = setTimeout(() => {
       animationTimer = undefined;
-      scene?.setLocked(!inputReady());
-      updateControls();
+      scene?.setLocked(autoplay || !inputReady());
+      render(false);
+      startAutomaticAction();
     }, duration);
   }
   message = response.type === "error" ? response.message : undefined;
   render(changed);
+  if (!animationTimer) startAutomaticAction();
 }
 
 function setupSettings(): void {
@@ -363,16 +529,28 @@ function setupSettings(): void {
   }
   const animation = element<HTMLInputElement>("animation-speed");
   const pause = element<HTMLInputElement>("ai-pause");
-  const pickup = element<HTMLSelectElement>("pickup-animation");
   const danger = element<HTMLInputElement>("danger-warning");
+  const targetCardWidth = element<HTMLInputElement>("target-card-width");
+  const keepGroups = element<HTMLInputElement>("keep-groups-together");
   const threshold = element<HTMLInputElement>("danger-threshold");
-  const alwaysWild = element<HTMLInputElement>("always-play-wild");
+  const groupWild = element<HTMLInputElement>("group-except-wild");
+  const groupTwo = element<HTMLInputElement>("group-except-two");
+  const automaticDelay = element<HTMLInputElement>("automatic-delay");
+  const checks = {
+    autoPass: "auto-pass", autoPickup: "auto-pickup", autoSingle: "auto-single",
+    autoSingleExcludeWild: "auto-single-exclude-wild", autoSingleExcludeTwo: "auto-single-exclude-two",
+    autoSingleExcludeQueen: "auto-single-exclude-queen", autoSingleSkips: "auto-single-skips", dimUnplayable: "dim-unplayable",
+  } as const;
+  for (const [key, id] of Object.entries(checks)) element<HTMLInputElement>(id).checked = settings[key as keyof typeof checks];
   animation.valueAsNumber = ANIMATION_SPEEDS.indexOf(settings.animationSpeed);
   pause.valueAsNumber = settings.aiPauseMs / 1000;
-  pickup.value = settings.pickupAnimation;
   danger.checked = settings.dangerWarning;
+  targetCardWidth.valueAsNumber = settings.targetCardWidth;
+  keepGroups.checked = settings.keepGroupsTogether;
   threshold.valueAsNumber = settings.dangerThreshold;
-  alwaysWild.checked = settings.alwaysPlayWild;
+  groupWild.checked = settings.groupExceptWild;
+  groupTwo.checked = settings.groupExceptTwo;
+  automaticDelay.valueAsNumber = settings.automaticDelayMs / 1000;
   const updateLabels = () => {
     const seconds = settings.aiPauseMs / 1000;
     element("animation-speed-value").textContent = `${settings.animationSpeed}×`;
@@ -383,19 +561,32 @@ function setupSettings(): void {
     element("danger-threshold-value").textContent = cards;
     threshold.setAttribute("aria-valuetext", cards);
     threshold.disabled = !settings.dangerWarning;
+    element("danger-threshold-setting").hidden = !settings.dangerWarning;
+    element("target-card-width-value").textContent = `${settings.targetCardWidth} dpi`;
+    targetCardWidth.setAttribute("aria-valuetext", `${settings.targetCardWidth} dpi`);
+    element("auto-single-options").hidden = !settings.autoSingle;
+    const cancelSeconds = settings.automaticDelayMs / 1000;
+    element("automatic-delay-value").textContent = `${cancelSeconds} s`;
+    automaticDelay.setAttribute("aria-valuetext", `${cancelSeconds} ${cancelSeconds === 1 ? "second" : "seconds"}`);
   };
   const updateSettings = () => {
     settings = readSettings({
       animationSpeed: ANIMATION_SPEEDS[animation.valueAsNumber],
       aiPauseMs: pause.valueAsNumber * 1000,
-      pickupAnimation: pickup.value,
       dangerWarning: danger.checked,
+      targetCardWidth: targetCardWidth.valueAsNumber,
+      keepGroupsTogether: keepGroups.checked,
       dangerThreshold: threshold.valueAsNumber,
-      alwaysPlayWild: alwaysWild.checked,
+      groupExceptWild: groupWild.checked,
+      groupExceptTwo: groupTwo.checked,
+      ...Object.fromEntries(Object.entries(checks).map(([key, id]) => [key, element<HTMLInputElement>(id).checked])),
+      automaticDelayMs: automaticDelay.valueAsNumber * 1000,
     });
     updateLabels();
+    cancelAutomaticAction(false);
+    canceledAutomaticRevision = undefined;
     sendTiming();
-    if (view && !replaying) showDanger(view);
+    if (view && !replaying) { showDanger(view); render(true); }
     try {
       localStorage.setItem(settingsKey, JSON.stringify(settings));
     } catch {
@@ -403,25 +594,52 @@ function setupSettings(): void {
     }
   };
   updateLabels();
-  animation.oninput = pause.oninput = threshold.oninput = updateSettings;
-  pickup.onchange = danger.onchange = alwaysWild.onchange = updateSettings;
+  animation.oninput = pause.oninput = threshold.oninput = automaticDelay.oninput = updateSettings;
+  for (const input of [danger, groupWild, groupTwo, ...Object.values(checks).map(id => element<HTMLInputElement>(id))]) {
+    input.onchange = updateSettings;
+  }
+  keepGroups.onchange = targetCardWidth.oninput = () => {
+    updateSettings();
+    render(true);
+  };
   reducedMotion.addEventListener("change", sendTiming);
 }
 
 function setupDialogs(): void {
+  const changed = () => {
+    syncAutoplayPause();
+    if (menu.matches(":popover-open") || document.querySelector("dialog[open]")) pauseAutomaticAction();
+    else startAutomaticAction();
+  };
+  const observer = new MutationObserver(changed);
+  for (const dialog of document.querySelectorAll("dialog")) observer.observe(dialog, { attributes: true, attributeFilter: ["open"] });
+  menu.addEventListener("beforetoggle", event => {
+    if ((event as ToggleEvent).newState === "open") {
+      pauseAutomaticAction();
+      if (autoplay) worker?.postMessage(JSON.stringify({ paused: true }));
+    }
+  });
+  menu.addEventListener("toggle", changed);
+  roundDialog.addEventListener("cancel", event => event.preventDefault());
+  roundDialog.addEventListener("keydown", event => {
+    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); }
+  });
+  roundDialog.addEventListener("close", () => {
+    if (!roundDialog.open && view?.result && busy === undefined) roundDialog.showModal();
+  });
   element("open-rules").onclick = () => {
     menu.hidePopover();
     rulesDialog.showModal();
-  };
-  element("open-deck").onclick = () => {
-    menu.hidePopover();
-    deckDialog.showModal();
   };
   element("open-settings").onclick = () => {
     menu.hidePopover();
     settingsDialog.showModal();
   };
-  restartButton.onclick = () => restartDialog.showModal();
+  restartButton.onclick = () => {
+    menu.hidePopover();
+    cancelAutomaticAction();
+    restartDialog.showModal();
+  };
   element("confirm-restart").onclick = () => {
     restartDialog.close();
     send({ type: "restart" });
@@ -436,38 +654,103 @@ function setupDialogs(): void {
   } catch {
     // An offline file can still be played when the browser disables storage.
   }
-  const backOptions = DECKS.map((option, index) => {
-    const button = document.createElement("button");
-    button.className = "back-choice";
-    button.setAttribute("aria-pressed", String(index === deckBack));
-    const picture = option.art ? document.createElement("img") : document.createElement("span");
-    if (picture instanceof HTMLImageElement) {
-      picture.src = option.art!;
-      picture.alt = "";
-    } else picture.className = "back-pattern";
-    button.append(picture, option.name);
-    button.onclick = () => {
-      deckBack = index;
-      try {
-        localStorage.setItem("crazy-eights-back", String(index));
-      } catch {
-        // The selected art is still available for the current page.
-      }
-      backOptions.forEach((choice, i) => choice.setAttribute("aria-pressed", String(i === index)));
-      render(false);
-    };
-    return button;
-  });
-  element("deck-options").replaceChildren(...backOptions);
+}
+
+function autoplayPaused(): boolean {
+  return autoplay && (menu.matches(":popover-open") || !!document.querySelector("dialog[open]"));
+}
+
+function syncAutoplayPause(): void {
+  worker?.postMessage(JSON.stringify({ paused: autoplayPaused() }));
+}
+
+function setAutoplay(enabled: boolean): void {
+  autoplay = enabled && debug;
+  cancelAutomaticAction();
+  const clear = autoplay && staged.length > 0 && !isQueued();
+  const holdMs = clear && !reducedMotion.matches ? STAGE_FLIGHT / settings.animationSpeed + 48 : 0;
+  if (clear) { staged = []; playCapacity = 0; }
+  worker?.postMessage(JSON.stringify({ autoplay, paused: autoplayPaused(), holdMs }));
+  if (clear) render(true);
+  else { announce(); updateControls(); scene?.setLocked(autoplay || !inputReady()); }
+}
+
+function toggleDebug(): void {
+  if (replaying || shuffleLocked()) return;
+  cancelDeckTap();
+  debug = !debug;
+  worker?.postMessage(JSON.stringify({ debug }));
+  if (!debug && autoplay) setAutoplay(false);
+  updateControls();
+  showDebugStatus();
+}
+
+function showDebugStatus(): void {
+  const toast = element("debug-toast");
+  toast.textContent = `Debug mode ${debug ? "on" : "off"}`;
+  toast.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { toast.hidden = true; }, 2200);
+}
+
+function setupDebug(): void {
+  let lastTouch = { time: -Infinity, x: 0, y: 0 };
+  let toggledAt = -Infinity;
+  opponentHand.onpointerup = event => {
+    if (event.pointerType === "mouse") return;
+    const now = performance.now();
+    if (now - lastTouch.time <= 450 && Math.hypot(event.clientX - lastTouch.x, event.clientY - lastTouch.y) <= 30) {
+      toggledAt = now;
+      lastTouch.time = -Infinity;
+      toggleDebug();
+    } else lastTouch = { time: now, x: event.clientX, y: event.clientY };
+  };
+  opponentHand.ondblclick = () => {
+    if (performance.now() - toggledAt > 500) toggleDebug();
+  };
+  const reshuffle = () => {
+    cancelDeckTap();
+    if (canDebugShuffle()) send({ type: "debug-reshuffle" });
+  };
+  // Defer debug single taps so the first half of a double tap never draws or clears a play.
+  stockPile.onpointerup = event => {
+    if (!canDebugShuffle()) return;
+    const now = performance.now();
+    const twice = now - lastDeckTap.time <= 450 &&
+      Math.hypot(event.clientX - lastDeckTap.x, event.clientY - lastDeckTap.y) <= 30;
+    cancelAutomaticAction();
+    if (twice) { reshuffle(); return; }
+    cancelDeckTap();
+    lastDeckTap = { time: now, x: event.clientX, y: event.clientY };
+    const revision = view?.revision;
+    worker?.postMessage(JSON.stringify({ holdMs: 450 }));
+    deckTapTimer = setTimeout(() => {
+      cancelDeckTap();
+      if (revision === view?.revision && !menu.matches(":popover-open") && !document.querySelector("dialog[open]")) drawOrPass();
+    }, 450);
+  };
+  stockPile.ondblclick = reshuffle;
+  stockPile.onclick = event => {
+    if (!debug || event.detail === 0) drawOrPass();
+  };
+  autoplayCheck.onchange = () => setAutoplay(autoplayCheck.checked);
 }
 
 async function start(): Promise<void> {
   setupDialogs();
   setupSettings();
+  feedback.setup();
+  setupPwa();
+  setupDebug();
+  if (debug) showDebugStatus();
   discardPile.onclick = confirmPlay;
-  stockPile.onclick = drawOrPass;
-  tableBackground.onclick = drawOrPass;
-  nextRound.onclick = confirmPlay;
+  nextRound.onclick = () => {
+    if (!view?.result || !inputReady()) return;
+    roundDialog.close();
+    send({ type: view.matchResult ? "restart" : "next-round" });
+  };
+
+  element("cancel-automatic").onclick = () => cancelAutomaticAction();
   table.addEventListener("contextmenu", event => event.preventDefault());
   table.addEventListener("selectstart", event => event.preventDefault());
   menuShield.onpointerup = menuShield.onclick = () => {
@@ -477,14 +760,20 @@ async function start(): Promise<void> {
   replayShield.onkeydown = event => {
     if (event.key === "Escape") replayController?.abort();
   };
-  replayButton.onclick = () => { void replayOpponent(); };
+  replayButton.onclick = () => {
+    if (replaying) replayController?.abort();
+    else void replayOpponent();
+  };
   const [images] = await Promise.all([loadCardArt(), document.fonts.load("700 14px Barlow Condensed")]);
   worker = new LocalServer();
+  worker.postMessage(JSON.stringify({ debug }));
+  worker.postMessage(JSON.stringify({ autoplay }));
+  syncAutoplayPause();
   sendTiming();
   worker.onmessage = ({ data }: MessageEvent<string>) => receive(JSON.parse(data) as Response);
   worker.onerror = () => {
+    cancelAutomaticAction();
     stockPile.disabled = true;
-    tableBackground.disabled = true;
     discardPile.disabled = true;
     const error = "The game couldn’t continue. Reload to try again.";
     showNotice(error);
@@ -492,8 +781,8 @@ async function start(): Promise<void> {
   };
 
   const density = Math.min(window.devicePixelRatio || 1, 3);
-  scene = new CardTable(table, element("card-targets"), stockPile, discardPile, {
-    tapCard, flickCard, playQueue: confirmPlay, clearPlay,
+  scene = new CardTable(table, element("card-targets"), stockPile, discardPile, replayButton, automaticPanel, opponentHand, {
+    tapCard, flickCard, playQueue: confirmPlay, clearPlay, suitBling: () => feedback.bling(),
     ready: () => send({ type: "snapshot" }),
   }, images, density);
   new Phaser.Game({

@@ -1,9 +1,8 @@
 import type Phaser from "phaser";
 import type { Card, PlayedCard, Special, Suit } from "@crazy-eights/protocol";
 import { ART_WIDTH as CARD_WIDTH, ART_HEIGHT as CARD_HEIGHT } from "./table-layout.ts";
-import jack from "./art/jack.svg?inline";
-import queen from "./art/queen.svg?inline";
-import king from "./art/king.svg?inline";
+import { BACK_INNER_TOP, BACK_INNER_BOTTOM, pointRollOffsets } from "./shuffle-animation.ts";
+import { suitInk, wildReelFrame, wildReelInk } from "./wild-reel.ts";
 
 const imports = import.meta.glob<string>("./art/*.gif", { eager: true, import: "default", query: "?inline" });
 const art = (file: string) => imports[`./art/${file}.gif`]!;
@@ -29,7 +28,13 @@ export const describeCard = (card: Card) => `${cardLabel(card)} of ${suitLabel(c
 const CENTER_X = CARD_WIDTH / 2;
 const CENTER_Y = CARD_HEIGHT / 2;
 
-export async function loadCardArt(): Promise<{ court: HTMLImageElement[]; backs: (HTMLImageElement | null)[] }> {
+export interface FaceTexture {
+  paper: string;
+  grayPaper: string;
+  ink: string;
+}
+
+export async function loadCardArt(): Promise<{ backs: (HTMLImageElement | null)[] }> {
   const icon = document.createElement("link");
   icon.rel = "icon";
   icon.href = art("icon");
@@ -41,11 +46,8 @@ export async function loadCardArt(): Promise<{ court: HTMLImageElement[]; backs:
     await image.decode();
     return image;
   };
-  const [court, backs] = await Promise.all([
-    Promise.all([jack, queen, king].map(load)),
-    Promise.all(DECKS.map(deck => deck.art ? load(deck.art) : null)),
-  ]);
-  return { court, backs };
+  const backs = await Promise.all(DECKS.map(deck => deck.art ? load(deck.art) : null));
+  return { backs };
 }
 
 function rounded(context: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
@@ -62,45 +64,45 @@ function label(context: CanvasRenderingContext2D, value: string, x: number, y: n
 }
 
 export class CardTextures {
+  private readonly suitBand = document.createElement("canvas");
+  private readonly generated = new Set<string>();
+
   constructor(
     private readonly textures: Phaser.Textures.TextureManager,
     private readonly art: Awaited<ReturnType<typeof loadCardArt>>,
     private readonly density: number,
   ) {}
 
-  face(card: PlayedCard): string {
+  face(card: PlayedCard, reel?: { suits: readonly Suit[]; progress: number }): FaceTexture {
     const suit = card.calledSuit ?? card.suit;
-    const key = `face:${card.id}:${suit}`;
-    if (this.textures.exists(key)) return key;
-    const texture = this.textures.createCanvas(key, CARD_WIDTH * this.density, CARD_HEIGHT * this.density)!;
+    const key = reel ? `wild-reel:${card.id}` : `face:${card.id}:${suit}`;
+    const face = { paper: this.paper(false), grayPaper: this.paper(true), ink: key };
+    if (this.textures.exists(key) && !reel) return face;
+    const texture = this.textures.exists(key) ? this.textures.get(key) as Phaser.Textures.CanvasTexture :
+      this.textures.createCanvas(key, CARD_WIDTH * this.density, CARD_HEIGHT * this.density)!;
+    this.generated.add(key);
     const ctx = texture.getContext();
-    ctx.scale(this.density, this.density);
-    this.paper(ctx);
-    const red = suit === "hearts" || suit === "diamonds";
-    const ink = red ? "#a6293d" : "#202c33";
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, CARD_WIDTH * this.density, CARD_HEIGHT * this.density);
+    ctx.setTransform(this.density, 0, 0, this.density, 0, 0);
+    const ink = reel ? wildReelInk(reel.suits, reel.progress) : suitInk(suit);
     const special = SPECIAL_LABEL[card.special];
     const accent = card.special === "wild" ? "#713790" : card.special === "pickup" || card.special === "super-pickup"
       ? "#974b10" : "#285876";
 
-    if (card.rank >= 11) {
-      const portrait = this.art.court[card.rank - 11]!;
-      const scale = Math.min(79 / portrait.naturalWidth, 123 / portrait.naturalHeight);
-      const width = portrait.naturalWidth * scale;
-      const height = portrait.naturalHeight * scale;
-      ctx.drawImage(portrait, CENTER_X - width / 2, CENTER_Y - height / 2, width, height);
-    } else {
-      this.pips(ctx, card.rank, suit, ink);
-    }
-
-    const corner = () => {
-      label(ctx, rankLabel(card.rank), 19, 24, card.rank === 10 ? 27 : 33, "serif", ink);
-      label(ctx, SUIT_SYMBOL[suit], 19, 52, 24, "serif", ink);
+    const index = (x: number, y: number, scale = 1, inverted = false) => {
+      label(ctx, rankLabel(card.rank), x, y, (card.rank === 10 ? 27 : 33) * scale, "serif", ink);
+      if (!reel) label(ctx, SUIT_SYMBOL[suit], x, y + 28 * scale, 24 * scale, "serif", ink);
+      else this.drawSuitReel(ctx, x, y + 28 * scale, 24 * scale, reel, inverted);
     };
-    corner();
+
+    index(CENTER_X, 58, 2);
+
+    index(19, 24);
     ctx.save();
     ctx.translate(CARD_WIDTH, CARD_HEIGHT);
     ctx.rotate(Math.PI);
-    corner();
+    index(19, 24, 1, true);
     ctx.restore();
     if (special) {
       rounded(ctx, 42, 148, 58, 22, 5);
@@ -109,16 +111,85 @@ export class CardTextures {
       label(ctx, special, CENTER_X, 159.5, 14, "sans-serif", "#fff0d7");
     }
     texture.refresh();
+    return face;
+  }
+
+  private drawSuitReel(ctx: CanvasRenderingContext2D, x: number, y: number, size: number,
+    reel: { suits: readonly Suit[]; progress: number }, inverted: boolean): void {
+    const width = size * 1.4, height = size + 10;
+    const band = this.suitBand;
+    band.width = Math.ceil(width * this.density);
+    band.height = Math.ceil(height * this.density);
+    const ink = band.getContext("2d")!;
+    ink.scale(this.density, this.density);
+    const frame = wildReelFrame(reel.suits, reel.progress);
+    const direction = inverted ? -1 : 1;
+    const draw = (suit: Suit, offset: number) => label(ink, SUIT_SYMBOL[suit], width / 2,
+      height / 2 + offset * direction, size, "serif", suitInk(suit));
+    draw(frame.current, frame.offset * height);
+    if (frame.next) draw(frame.next, (frame.offset - 1) * height);
+    const fade = ink.createLinearGradient(0, 0, 0, height);
+    fade.addColorStop(0, "transparent"); fade.addColorStop(5 / height, "white");
+    fade.addColorStop(1 - 5 / height, "white"); fade.addColorStop(1, "transparent");
+    ink.globalCompositeOperation = "destination-in";
+    ink.fillStyle = fade;
+    ink.fillRect(0, 0, width, height);
+    ctx.drawImage(band, x - width / 2, y - height / 2, width, height);
+  }
+
+  back(index: number, pointsPerCard: number): string {
+    const key = `back:${index}:${pointsPerCard}`;
+    if (!this.textures.exists(key)) this.paintBack(key, index, pointsPerCard, pointsPerCard, 1);
     return key;
   }
 
-  back(index: number): string {
-    const key = `back:${index}`;
+  rollBack(index: number, from: number, to: number, progress: number): string {
+    const key = `back-roll:${index}`;
+    this.paintBack(key, index, from, to, progress);
+    return key;
+  }
+
+  private paintBack(key: string, index: number, from: number, to: number, progress: number): void {
+    const texture = this.textures.exists(key) ? this.textures.get(key) as Phaser.Textures.CanvasTexture :
+      this.textures.createCanvas(key, CARD_WIDTH * this.density, CARD_HEIGHT * this.density)!;
+    this.generated.add(key);
+    const ctx = texture.getContext();
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, CARD_WIDTH * this.density, CARD_HEIGHT * this.density);
+    ctx.drawImage(this.textures.get(this.backPaper(index)).getSourceImage() as CanvasImageSource, 0, 0);
+    ctx.scale(this.density, this.density);
+    ctx.beginPath();
+    ctx.rect(14, BACK_INNER_TOP, CARD_WIDTH - 28, BACK_INNER_BOTTOM - BACK_INNER_TOP);
+    ctx.clip();
+    const points = (value: number, offset: number) => {
+      let size = 62;
+      while (size > 12) {
+        ctx.font = size + "px Georgia, serif";
+        if (ctx.measureText(String(value)).width <= CARD_WIDTH - 62) break;
+        size--;
+      }
+      label(ctx, String(value), CENTER_X, CENTER_Y - 13 + offset, size, "Georgia, serif", "#f1d18e");
+      label(ctx, value === 1 ? "pt" : "pts", CENTER_X, CENTER_Y + 37 + offset, 24, "Georgia, serif", "#f1d18e");
+    };
+    if (from === to) points(to, 0);
+    else {
+      const offset = pointRollOffsets(progress);
+      points(from, offset.old);
+      points(to, offset.next);
+    }
+    ctx.restore();
+    texture.refresh();
+  }
+
+  private backPaper(index: number): string {
+    const key = `back-paper:${index}`;
     if (this.textures.exists(key)) return key;
     const texture = this.textures.createCanvas(key, CARD_WIDTH * this.density, CARD_HEIGHT * this.density)!;
+    this.generated.add(key);
     const ctx = texture.getContext();
     ctx.scale(this.density, this.density);
-    this.paper(ctx);
+    this.drawPaper(ctx);
     rounded(ctx, 8, 8, CARD_WIDTH - 16, CARD_HEIGHT - 16, 10);
     ctx.save();
     ctx.clip();
@@ -143,51 +214,41 @@ export class CardTextures {
       ctx.lineWidth = 1.5;
       rounded(ctx, 14, 14, CARD_WIDTH - 28, CARD_HEIGHT - 28, 7);
       ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(CENTER_X, 48);
-      ctx.lineTo(106, CENTER_Y);
-      ctx.lineTo(CENTER_X, 142);
-      ctx.lineTo(36, CENTER_Y);
-      ctx.closePath();
-      ctx.fillStyle = "#213840";
-      ctx.fill();
-      ctx.stroke();
-      label(ctx, "8", CENTER_X, CENTER_Y - 1, 46, "Georgia, serif", "#f1d18e");
     }
+    ctx.fillStyle = "#213840";
+    ctx.fillRect(27, 42, CARD_WIDTH - 54, 107);
     ctx.restore();
     texture.refresh();
     return key;
   }
 
-  private paper(ctx: CanvasRenderingContext2D): void {
+  destroy(): void {
+    for (const key of this.generated) this.textures.remove(key);
+    this.generated.clear();
+  }
+
+  private paper(gray: boolean): string {
+    const key = gray ? "paper:gray" : "paper:normal";
+    if (this.textures.exists(key)) return key;
+    const texture = this.textures.createCanvas(key, CARD_WIDTH * this.density, CARD_HEIGHT * this.density)!;
+    this.generated.add(key);
+    const ctx = texture.getContext();
+    ctx.scale(this.density, this.density);
+    this.drawPaper(ctx, gray);
+    texture.refresh();
+    return key;
+  }
+
+  private drawPaper(ctx: CanvasRenderingContext2D, gray = false): void {
     rounded(ctx, 0.5, 0.5, CARD_WIDTH - 1, CARD_HEIGHT - 1, 13);
     const grade = ctx.createLinearGradient(0, 0, CARD_WIDTH, CARD_HEIGHT);
     grade.addColorStop(0, "#fffdf1");
     grade.addColorStop(.56, "#fcf2df");
     grade.addColorStop(1, "#e9d5b3");
-    ctx.fillStyle = grade;
+    ctx.fillStyle = gray ? "#d5d8da" : grade;
     ctx.fill();
-    ctx.strokeStyle = "#c4a97d";
+    ctx.strokeStyle = gray ? "#aab1b4" : "#c4a97d";
     ctx.stroke();
   }
 
-  private pips(ctx: CanvasRenderingContext2D, rank: number, suit: Suit, color: string): void {
-    const symbol = SUIT_SYMBOL[suit];
-    if (rank === 1 || rank === 8) {
-      label(ctx, symbol, CENTER_X, CENTER_Y + 2, 73, "Georgia, serif", color);
-      return;
-    }
-    if (rank <= 3) {
-      const rows = rank === 2 ? [49, 137] : [49, 93, 137];
-      rows.forEach(y => label(ctx, symbol, CENTER_X, y, 39, "Georgia, serif", color));
-      return;
-    }
-    const rows = rank <= 5 ? [49, 137] : rank <= 7 ? [49, 93, 137] : [43, 75, 109, 141];
-    for (const y of rows) {
-      label(ctx, symbol, 52, y, 30, "Georgia, serif", color);
-      label(ctx, symbol, 90, y, 30, "Georgia, serif", color);
-    }
-    if (rank % 2 === 1) label(ctx, symbol, CENTER_X, rank === 7 ? 71 : 93, 28, "Georgia, serif", color);
-    if (rank === 10) [59, 125].forEach(y => label(ctx, symbol, CENTER_X, y, 24, "Georgia, serif", color));
-  }
 }

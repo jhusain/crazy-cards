@@ -5,12 +5,48 @@ export const PLAY_FLIGHT = 235;
 export const PLAY_HOLD = 105;
 export const PLAY_SLIDE = 188;
 export const PLAY_TIME = PLAY_FLIGHT + PLAY_HOLD + PLAY_SLIDE;
+export const SHUFFLE_FILL = PLAY_TIME / 3;
+export const SHUFFLE_HALF = PLAY_TIME / 2;
+export const SHUFFLE_ROLL = PLAY_TIME;
+export const SHUFFLE_PAUSE = PLAY_TIME;
+export const SHUFFLE_DURATION = SHUFFLE_FILL + 6 * SHUFFLE_HALF + SHUFFLE_ROLL + SHUFFLE_PAUSE;
 export const STAGE_FLIGHT = 235;
 export const HAND_DRAW = 365;
+export const HAND_READY = 235;
+const HAND_DRAW_REVEAL = 150;
 export const OPPONENT_DRAW = 330;
 export const HAND_DEAL = 245;
 export const OPPONENT_DEAL = 260;
 const FRAME_BUFFER = 48;
+
+export function opponentWildPlay(view: TableView): boolean {
+  return view.event?.kind === "play" && view.event.seat !== view.seat &&
+    view.event.cards?.at(-1)?.special === "wild";
+}
+
+export function playDuration(view: TableView): number {
+  return opponentWildPlay(view) ? Math.max(playPhases(false, false, true).total, playPhases(false, true, true).total) : PLAY_TIME;
+}
+
+export function playPhases(queued: boolean, restoring: boolean, wild = false) {
+  const returnStart = restoring ? PLAY_FLIGHT + PLAY_HOLD : PLAY_TIME;
+  const normal = {
+    flight: queued ? 0 : PLAY_FLIGHT,
+    collapseStart: queued ? 0 : PLAY_FLIGHT + (restoring ? 0 : PLAY_HOLD),
+    collapseEnd: returnStart,
+    returnStart,
+    total: PLAY_TIME,
+    reelEnd: 0,
+  };
+  if (wild) {
+    const reelEnd = PLAY_TIME * 23 / 10;
+    const collapseStart = reelEnd + PLAY_TIME / 5;
+    const extra = collapseStart - normal.collapseStart;
+    return { flight: normal.flight, collapseStart, collapseEnd: normal.collapseEnd + extra,
+      returnStart: normal.returnStart + extra, total: normal.total + extra, reelEnd };
+  }
+  return normal;
+}
 
 export interface TableTiming extends GameSettings {
   animate: boolean;
@@ -22,26 +58,37 @@ export function drawsFor(view: TableView, seat: Seat): number {
   return event?.penalty?.seat === seat ? event.penalty.count : 0;
 }
 
-export function drawTimeline(view: TableView, seat: Seat, mode: GameSettings["pickupAnimation"]) {
+export function drawTimeline(view: TableView, seat: Seat) {
+  const event = view.event;
   const count = drawsFor(view, seat);
-  const duration = seat === view.seat ? HAND_DRAW : OPPONENT_DRAW;
-  const sequential = count > 1 && mode === "sequential";
-  const reflow = sequential ? duration : 0;
-  const start = count && view.event?.penalty?.seat === seat ? PLAY_TIME : 0;
-  const total = count === 0 ? 0 : start + reflow + (sequential ? count : 1) * duration;
-  return { count, duration, sequential, start, reflow, total };
+  const player = seat === view.seat;
+  const duration = player ? HAND_DRAW : OPPONENT_DRAW;
+  const reveal = player ? HAND_DRAW_REVEAL : 0;
+  const start = count > 0 && view.event?.penalty?.seat === seat ? playDuration(view) : 0;
+  const step = reveal + duration;
+  const shuffles = count || event?.kind === "shuffle" && player ? (event?.reshuffles ?? []).map((shuffle, index) => ({ ...shuffle,
+    start: start + shuffle.drawIndex * step + index * SHUFFLE_DURATION, duration: SHUFFLE_DURATION })) : [];
+  const cardStarts = Array.from({ length: count }, (_, index) => start + index * step +
+    shuffles.filter(shuffle => shuffle.drawIndex <= index).length * SHUFFLE_DURATION);
+  return { count, duration, reveal, start, cardStarts, shuffles, total: start + count * step + shuffles.length * SHUFFLE_DURATION };
 }
 
-export function tableAnimationTime(
-  view: TableView, speed: number, animate: boolean, pickup: GameSettings["pickupAnimation"],
-): number {
-  if (!animate) return 0;
+export function handReadinessTimeline(view: TableView) {
   const event = view.event;
-  const humanDraw = drawTimeline(view, view.seat, pickup).total;
-  const enemyDraw = drawTimeline(view, otherSeat(view.seat), pickup).total;
-  const play = event?.kind === "play" ? PLAY_TIME : 0;
-  const duration = !event ? Math.max(HAND_DEAL, OPPONENT_DEAL) :
-    Math.max(play, humanDraw, enemyDraw);
+  const humanDraw = drawTimeline(view, view.seat).total;
+  const enemyDraw = drawTimeline(view, otherSeat(view.seat)).total;
+  const play = event?.kind === "play" ? playDuration(view) : 0;
+  const emptyDraw = event?.kind === "draw" && !humanDraw && !enemyDraw ? HAND_DRAW : 0;
+  const start = !event ? Math.max(HAND_DEAL, OPPONENT_DEAL) : Math.max(play, humanDraw, enemyDraw, emptyDraw);
+  const duration = view.turn === view.seat && !view.result && !view.queuedCards.length
+    ? HAND_READY : 0;
+  return { start, duration };
+}
+
+export function tableAnimationTime(view: TableView, speed: number, animate: boolean): number {
+  if (!animate) return 0;
+  const ready = handReadinessTimeline(view);
+  const duration = ready.start + ready.duration;
   return duration > 0 ? duration / speed + FRAME_BUFFER : 0;
 }
 
@@ -50,6 +97,6 @@ export function replaySpeed(settings: GameSettings): number {
 }
 
 export function replayDelay(view: TableView, timing: TableTiming, hasNext: boolean): number {
-  return tableAnimationTime(view, replaySpeed(timing), timing.animate, timing.pickupAnimation) +
+  return tableAnimationTime(view, replaySpeed(timing), timing.animate) +
     (hasNext ? timing.aiPauseMs : 0);
 }
