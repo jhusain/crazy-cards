@@ -204,8 +204,8 @@ export function collapsePlayPositions(anchor: CardPosition, count: number): Card
 }
 
 
-// Every legal contiguous partition is represented by its row count and
-// smallest possible widest row. Narrower rows never reduce feasible width.
+// Store the minimum widest row for each suffix and exact row count.
+// Among equally balanced partitions, fill earlier rows first.
 function handPartitions<T extends { rank: number }>(cards: readonly T[], keepGroups: boolean) {
   const boundaries = [0];
   for (let index = 1; index <= cards.length; index++) {
@@ -214,30 +214,32 @@ function handPartitions<T extends { rank: number }>(cards: readonly T[], keepGro
     }
   }
   const count = boundaries.length - 1;
-  const best = Array.from({ length: count + 1 }, () =>
-    Array<{ longest: number; previous: number } | undefined>(count + 1));
-  best[0]![0] = { longest: 0, previous: -1 };
-  const partitions: { rows: T[][]; longest: number }[] = [];
-  for (let rowCount = 1; rowCount <= count; rowCount++) {
-    for (let end = rowCount; end <= count; end++) {
-      for (let begin = rowCount - 1; begin < end; begin++) {
-        const prior = best[rowCount - 1]![begin];
-        if (!prior) continue;
-        const longest = Math.max(prior.longest, boundaries[end]! - boundaries[begin]!);
-        const current = best[rowCount]![end];
-        if (!current || longest < current.longest) best[rowCount]![end] = { longest, previous: begin };
+  const minimum = Array.from({ length: count + 1 }, () => Array<number>(count + 1).fill(Infinity));
+  minimum[0]![count] = 0;
+  for (let rows = 1; rows <= count; rows++) {
+    for (let start = 0; start <= count - rows; start++) {
+      for (let end = start + 1; end <= count - rows + 1; end++) {
+        const length = boundaries[end]! - boundaries[start]!;
+        const widest = Math.max(length, minimum[rows - 1]![end]!);
+        minimum[rows]![start] = Math.min(minimum[rows]![start]!, widest);
       }
     }
-    const rows: T[][] = [];
-    let end = count;
-    for (let remaining = rowCount; remaining > 0; remaining--) {
-      const begin = best[remaining]![end]!.previous;
-      rows.unshift(cards.slice(boundaries[begin], boundaries[end]));
-      end = begin;
-    }
-    partitions.push({ rows, longest: best[rowCount]![count]!.longest });
   }
-  return partitions;
+
+  function pack(rowCount: number, capacity: number): T[][] {
+    const rows: T[][] = [];
+    let start = 0;
+    for (let remaining = rowCount - 1; remaining >= 0; remaining--) {
+      // Take the longest prefix that leaves a feasible partition for the suffix.
+      let end = count - remaining;
+      while (boundaries[end]! - boundaries[start]! > capacity || minimum[remaining]![end]! > capacity) end--;
+      rows.push(cards.slice(boundaries[start], boundaries[end]));
+      start = end;
+    }
+    return rows;
+  }
+
+  return { widestByRowCount: minimum.slice(1).map(row => row[0]!), pack };
 }
 
 function betterScore(score: readonly number[], previous: readonly number[]): boolean {
@@ -272,20 +274,21 @@ function chooseHandPlan<T extends { rank: number }>(
 ) {
   const available = Math.max(.01, layout.tableWidth - 2 * layout.inset - HAND_FADE_WIDTH);
   const room = Math.max(.01, layout.tableHeight - layout.handY - layout.inset - HAND_FADE_WIDTH);
-  let best: { rows: T[][]; longest: number; width: number; step: number; handY: number;
+  let best: { rowCount: number; minimumWidest: number; width: number; step: number; handY: number;
     pileY: number; opponentVisible: number; score: number[] } | undefined;
-  for (const { rows, longest } of partitions) {
-    const gap = Math.min(7, room / (rows.length * 10));
-    const width = Math.min(target, available / (longest * PILE_STEP),
-      (room - (rows.length - 1) * gap) / rows.length * ART_WIDTH / CORNER_HEIGHT);
+  for (const [index, minimumWidest] of partitions.widestByRowCount.entries()) {
+    const rowCount = index + 1;
+    const gap = Math.min(7, room / (rowCount * 10));
+    const width = Math.min(target, available / (minimumWidest * PILE_STEP),
+      (room - (rowCount - 1) * gap) / rowCount * ART_WIDTH / CORNER_HEIGHT);
     const step = cornerHeight(width) + gap;
-    const lastSpace = room - (rows.length - 1) * step;
+    const lastSpace = room - (rowCount - 1) * step;
     const shift = arrangeVertically ? Math.max(0, lastSpace - 2 * cornerHeight(width)) : 0;
     const handY = layout.handY + shift;
     const placement = verticalPlacement(layout, handY, fixedPiles || !arrangeVertically);
-    const score = [target - width, rows.length, Math.abs(lastSpace - shift - 2 * cornerHeight(width)),
+    const score = [target - width, rowCount, Math.abs(lastSpace - shift - 2 * cornerHeight(width)),
       ...placement.score];
-    if (!best || betterScore(score, best.score)) best = { rows, longest, width, step, handY,
+    if (!best || betterScore(score, best.score)) best = { rowCount, minimumWidest, width, step, handY,
       pileY: placement.pileY, opponentVisible: placement.opponentVisible, score };
   }
   if (!best) {
@@ -294,8 +297,9 @@ function chooseHandPlan<T extends { rank: number }>(
     return { rows: [] as T[][], positions: [] as CardPosition[], width: target, handY,
       pileY: placement.pileY, opponentVisible: placement.opponentVisible, score: [0, 0, 0, ...placement.score] };
   }
-  const { rows, longest, width, step, handY, pileY, opponentVisible, score } = best;
-  const left = layout.inset + (available - longest * width * PILE_STEP) / 2;
+  const { rowCount, minimumWidest, width, step, handY, pileY, opponentVisible, score } = best;
+  const rows = partitions.pack(rowCount, minimumWidest);
+  const left = layout.inset + (available - minimumWidest * width * PILE_STEP) / 2;
   return { rows, width, handY, pileY, opponentVisible, score, positions: rows.flatMap((row, r) => row.map((_, c) => ({
     x: left + c * width * PILE_STEP, y: handY + r * step, width,
   }))) };

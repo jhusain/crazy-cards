@@ -427,3 +427,17 @@ test("a wider row does not justify a third row at the same card width", () => {
   close(small.width, 190);
   assert.deepEqual(small.rows, [cards]);
 });
+
+test("equally wide layouts with the same row count fill the earlier rows first", () => {
+  const cards = [8, 2, 7, 11, 5].map(rank => ({ rank }));
+  for (const keepGroups of [true, false]) {
+    const { hand } = planTableLayout(360, 740, { cards, target: 240, keepGroups });
+    close(hand.width, 240);
+    assert.deepEqual(hand.rows, [cards.slice(0, 3), cards.slice(3)]);
+  }
+
+  const grouped = [8, 2, 7, 7, 5].map(rank => ({ rank }));
+  const { hand } = planTableLayout(360, 740, { cards: grouped, target: 240, keepGroups: true });
+  close(hand.width, 240);
+  assert.deepEqual(hand.rows, [grouped.slice(0, 2), grouped.slice(2)]);
+});
