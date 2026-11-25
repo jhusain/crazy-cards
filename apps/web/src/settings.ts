@@ -9,7 +9,6 @@ export interface GameSettings {
   keepGroupsTogether: boolean;
   groupExceptWild: boolean;
   groupExceptTwo: boolean;
-  flickNonEligibleGroup: boolean;
   autoPass: boolean;
   automaticDelayMs: number;
   autoPickup: boolean;
@@ -24,7 +23,7 @@ export interface GameSettings {
 
 export const DEFAULT_SETTINGS: GameSettings = {
   animationSpeed: .7, aiPauseMs: 1500, dangerWarning: true, dangerThreshold: 1, targetCardWidth: 240, keepGroupsTogether: true,
-  groupExceptWild: true, groupExceptTwo: true, flickNonEligibleGroup: false, autoPass: false, automaticDelayMs: 3000,
+  groupExceptWild: true, groupExceptTwo: true, autoPass: false, automaticDelayMs: 3000,
   autoPickup: false, autoSingle: false, autoSingleExcludeWild: false, autoSingleExcludeTwo: false,
   autoSingleExcludeQueen: false, autoSingleIgnoreExclusionsWhenOpponentEmpty: false, autoSingleSkips: false, dimUnplayable: false,
 };
@@ -33,7 +32,7 @@ export function readSettings(value: unknown): GameSettings {
   if (!value || typeof value !== "object") return { ...DEFAULT_SETTINGS };
   const {
     animationSpeed, aiPauseMs, dangerWarning, dangerThreshold, targetCardWidth, keepGroupsTogether,
-    groupExceptWild, groupExceptTwo, flickNonEligibleGroup, autoPass,
+    groupExceptWild, groupExceptTwo, autoPass,
     autoPickup, autoSingle, autoSingleExcludeWild, autoSingleExcludeTwo, autoSingleExcludeQueen, autoSingleIgnoreExclusionsWhenOpponentEmpty, autoSingleSkips, dimUnplayable,
   } = value as Partial<GameSettings>;
   const saved = value as Partial<GameSettings> & { autoPassDelayMs?: number };
@@ -51,7 +50,6 @@ export function readSettings(value: unknown): GameSettings {
     keepGroupsTogether: typeof keepGroupsTogether === "boolean" ? keepGroupsTogether : DEFAULT_SETTINGS.keepGroupsTogether,
     groupExceptWild: typeof groupExceptWild === "boolean" ? groupExceptWild : DEFAULT_SETTINGS.groupExceptWild,
     groupExceptTwo: typeof groupExceptTwo === "boolean" ? groupExceptTwo : DEFAULT_SETTINGS.groupExceptTwo,
-    flickNonEligibleGroup: flickNonEligibleGroup === true,
     autoPass: typeof autoPass === "boolean" ? autoPass : DEFAULT_SETTINGS.autoPass,
     automaticDelayMs: typeof delay === "number" && delay >= 1000 && delay <= 10000 && delay % 1000 === 0
       ? delay : DEFAULT_SETTINGS.automaticDelayMs,

@@ -6,7 +6,7 @@ import {
   type Card, type Command, type Request, type Response, type Suit, type TableView,
 } from "@crazy-eights/protocol";
 import { DECKS, SUIT_SYMBOL, loadCardArt, suitLabel } from "./cards.ts";
-import { guaranteedSkipFinish, flickPinsTopCard, flickPlay, orderFlickGroup } from "./card-gesture.ts";
+import { flickPlay } from "./card-gesture.ts";
 import { AutomaticActions, type AutomaticAction } from "./automatic-actions.ts";
 import { OpponentReplay } from "./opponent-replay.ts";
 import { roundProgress } from "./round-progress.ts";
@@ -165,9 +165,7 @@ function flickCard(id: number): void {
     playCapacity = Math.max(playCapacity, view.visibleDiscard.length + staged.length);
     render(true);
   };
-  if (!flickPinsTopCard(card, remaining, legal, settings) && play.length > 2 && !guaranteedSkipFinish(play, remaining) && card.special !== "wild" && (staged.length || view.opponentCount > 0)) {
-    chooseSuit(play.slice(1).map(member => member.suit), suit => commit(orderFlickGroup(play, suit)), "Choose suit");
-  } else commit(play);
+  commit(play);
 }
 
 function clearPlay(): void {
@@ -210,9 +208,9 @@ function choosePlay(cards: Card[], direct = false): void {
   chooseSuit(suits, submit);
 }
 
-function chooseSuit(suits: readonly Suit[], submit: (suit: Suit) => void, title = "Call a suit"): void {
+function chooseSuit(suits: readonly Suit[], submit: (suit: Suit) => void): void {
   cancelAutomaticAction();
-  element("suit-title").textContent = title;
+  element("suit-title").textContent = "Call a suit";
   const buttons = suits.map(suit => {
     const button = document.createElement("button");
     button.className = "suit-choice";
@@ -538,7 +536,6 @@ function setupSettings(): void {
   const groupTwo = element<HTMLInputElement>("group-except-two");
   const automaticDelay = element<HTMLInputElement>("automatic-delay");
   const checks = {
-    flickNonEligibleGroup: "flick-non-eligible-group",
     autoPass: "auto-pass", autoPickup: "auto-pickup", autoSingle: "auto-single",
     autoSingleExcludeWild: "auto-single-exclude-wild", autoSingleExcludeTwo: "auto-single-exclude-two",
     autoSingleExcludeQueen: "auto-single-exclude-queen",
