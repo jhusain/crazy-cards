@@ -2,7 +2,7 @@ import type Phaser from "phaser";
 import type { Card, PlayedCard, Special, Suit } from "@crazy-eights/protocol";
 import { ART_WIDTH as CARD_WIDTH, ART_HEIGHT as CARD_HEIGHT } from "./table-layout.ts";
 import { BACK_INNER_TOP, BACK_INNER_BOTTOM, pointRollOffsets } from "./shuffle-animation.ts";
-import { suitInk, wildReelFrame, wildReelInk } from "./wild-reel.ts";
+import { suitInk, wildReelFrame, wildReelInk, type WildReel } from "./wild-reel.ts";
 
 const imports = import.meta.glob<string>("./art/*.gif", { eager: true, import: "default", query: "?inline" });
 const art = (file: string) => imports[`./art/${file}.gif`]!;
@@ -73,7 +73,7 @@ export class CardTextures {
     private readonly density: number,
   ) {}
 
-  face(card: PlayedCard, reel?: { suits: readonly Suit[]; progress: number }): FaceTexture {
+  face(card: PlayedCard, reel?: { reel: WildReel; progress: number }): FaceTexture {
     const suit = card.calledSuit ?? card.suit;
     const key = reel ? `wild-reel:${card.id}` : `face:${card.id}:${suit}`;
     const face = { paper: this.paper(false), grayPaper: this.paper(true), ink: key };
@@ -85,7 +85,7 @@ export class CardTextures {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, CARD_WIDTH * this.density, CARD_HEIGHT * this.density);
     ctx.setTransform(this.density, 0, 0, this.density, 0, 0);
-    const ink = reel ? wildReelInk(reel.suits, reel.progress) : suitInk(suit);
+    const ink = reel ? wildReelInk(reel.reel, reel.progress) : suitInk(suit);
     const special = SPECIAL_LABEL[card.special];
     const accent = card.special === "wild" ? "#713790" : card.special === "pickup" || card.special === "super-pickup"
       ? "#974b10" : "#285876";
@@ -115,14 +115,14 @@ export class CardTextures {
   }
 
   private drawSuitReel(ctx: CanvasRenderingContext2D, x: number, y: number, size: number,
-    reel: { suits: readonly Suit[]; progress: number }, inverted: boolean): void {
+    reel: { reel: WildReel; progress: number }, inverted: boolean): void {
     const width = size * 1.4, height = size + 10;
     const band = this.suitBand;
     band.width = Math.ceil(width * this.density);
     band.height = Math.ceil(height * this.density);
     const ink = band.getContext("2d")!;
     ink.scale(this.density, this.density);
-    const frame = wildReelFrame(reel.suits, reel.progress);
+    const frame = wildReelFrame(reel.reel, reel.progress);
     const direction = inverted ? -1 : 1;
     const draw = (suit: Suit, offset: number) => label(ink, SUIT_SYMBOL[suit], width / 2,
       height / 2 + offset * direction, size, "serif", suitInk(suit));

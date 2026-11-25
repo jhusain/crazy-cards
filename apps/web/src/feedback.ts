@@ -62,28 +62,26 @@ export class CountdownFeedback {
     }
     this.reportVibration(message);
   }
-  bling(): void {
+  suitTick(sound: "tick" | "click"): void {
     if (!this.sound || document.hidden || this.context?.state !== "running") return;
-    const now = this.context.currentTime;
-    // Bright bell partials ring briefly, with the higher overtones fading first.
-    const partials = [
-      { frequency: 1568, level: .10, decay: .16 },
-      { frequency: 3136, level: .055, decay: .095 },
-      { frequency: 4704, level: .025, decay: .05 },
-    ];
-    for (const { frequency, level, decay } of partials) {
-      const tone = this.context.createOscillator();
-      const gain = this.context.createGain();
-      tone.type = "sine";
-      tone.frequency.setValueAtTime(frequency, now);
-      gain.gain.setValueAtTime(.0001, now);
-      gain.gain.exponentialRampToValueAtTime(level, now + .002);
-      gain.gain.exponentialRampToValueAtTime(.0001, now + decay);
-      tone.connect(gain).connect(this.context.destination);
-      tone.onended = () => { tone.disconnect(); gain.disconnect(); };
-      tone.start(now);
-      tone.stop(now + decay);
-    }
+    const context = this.context, now = context.currentTime;
+    const duration = sound === "click" ? .018 : .012;
+    const buffer = context.createBuffer(1, Math.ceil(context.sampleRate * duration), context.sampleRate);
+    const samples = buffer.getChannelData(0);
+    for (let i = 0; i < samples.length; i++) samples[i] = Math.random() * 2 - 1;
+    const source = context.createBufferSource();
+    source.buffer = buffer;
+    const filter = context.createBiquadFilter();
+    filter.type = "bandpass";
+    filter.frequency.value = sound === "click" ? 1800 : 3200;
+    filter.Q.value = 1.2;
+    const gain = context.createGain();
+    gain.gain.setValueAtTime(.0001, now);
+    gain.gain.exponentialRampToValueAtTime(sound === "click" ? .18 : .12, now + .001);
+    gain.gain.exponentialRampToValueAtTime(.0001, now + duration);
+    source.connect(filter).connect(gain).connect(context.destination);
+    source.onended = () => { source.disconnect(); filter.disconnect(); gain.disconnect(); };
+    source.start(now);
   }
   fireRumble(durationMs: number): void {
     if (!this.sound || document.hidden || this.context?.state !== "running" || durationMs <= 0) return;

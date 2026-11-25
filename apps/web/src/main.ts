@@ -784,7 +784,7 @@ async function start(): Promise<void> {
 
   const density = Math.min(window.devicePixelRatio || 1, 3);
   scene = new CardTable(table, element("card-targets"), stockPile, discardPile, replayButton, automaticPanel, opponentHand, {
-    tapCard, flickCard, playQueue: confirmPlay, clearPlay, suitBling: () => feedback.bling(),
+    tapCard, flickCard, playQueue: confirmPlay, clearPlay, suitTick: sound => feedback.suitTick(sound),
     fireRumble: duration => feedback.fireRumble(duration), stopFireRumble: () => feedback.stopFireRumble(),
     ready: () => send({ type: "snapshot" }),
   }, images, density);

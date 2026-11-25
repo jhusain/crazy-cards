@@ -2,7 +2,7 @@ import Phaser from "phaser";
 import { PLAY_SLOTS, canFollowInQueue, otherSeat, wildSuitOptions, type Card, type TableView } from "@crazy-eights/protocol";
 import { CardTextures, describeCard, loadCardArt, type FaceTexture } from "./cards.ts";
 import { shuffleFrame } from "./shuffle-animation.ts";
-import { wildReel, wildReelStop } from "./wild-reel.ts";
+import { wildReel, wildReelSounds } from "./wild-reel.ts";
 import { isUpwardFlick, queuedCardFlick } from "./card-gesture.ts";
 import {
   ART_HEIGHT, ART_WIDTH, CARD_DEPTH, HAND_FADE_WIDTH, PILE_STEP, artHeight, planTableLayout, opponentPositions, playLandingPositions,
@@ -41,7 +41,7 @@ type BoardState = {
 };
 type Controls = {
   tapCard: (id: number) => void; flickCard: (id: number) => void;
-  playQueue: () => void; clearPlay: () => void; ready: () => void; suitBling?: () => void;
+  playQueue: () => void; clearPlay: () => void; ready: () => void; suitTick?: (sound: "tick" | "click") => void;
   fireRumble?: (durationMs: number) => void; stopFireRumble?: () => void;
 };
 type CardTarget = { card: Card; position: CardPosition; dimmed: boolean; staged: boolean; depth: number };
@@ -521,22 +521,22 @@ export class CardTable extends Phaser.Scene {
       const depth = (alreadyQueued ? CARD_DEPTH.play : CARD_DEPTH.staging + PLAY_SLOTS) + index;
       const reel = !playerPlayed && index === last.length - 1 && card.special === "wild"
         ? wildReel(card.suit, card.calledSuit ?? card.suit, Math.random, wildSuitOptions(previous!.view.activeSuit, last.length)) : undefined;
-      const image = this.drawImage(this.art.face(card, reel ? { suits: reel, progress: 0 } : undefined), from, depth);
+      const image = this.drawImage(this.art.face(card, reel ? { reel, progress: 0 } : undefined), from, depth);
       this.priorCardPositions.set(card.id, from);
       const collapsed = collapsedPositions[index]!;
       return { image, from, appended: alreadyQueued ? from : landing[index]!, collapsed, target: targets[index]!, id: card.id, card, reel };
     });
 
-    let soundedStop = 0;
+    let soundedProgress = 0;
     let fireSoundStarted = false;
     if (incoming.some(card => card.reel)) this.board.dataset.wildReel = String(last.at(-1)!.id);
     this.tween(timing.total, progress => {
       const elapsed = progress * timing.total;
       for (const { card, reel } of incoming) if (reel) {
         const progress = unit(elapsed / timing.reelEnd);
-        this.art.face(card, { suits: reel, progress });
-        const stop = wildReelStop(reel, progress);
-        if (stop > soundedStop) { soundedStop = stop; this.controls.suitBling?.(); }
+        this.art.face(card, { reel, progress });
+        for (const sound of wildReelSounds(reel, soundedProgress, progress)) this.controls.suitTick?.(sound);
+        soundedProgress = progress;
       }
       if (incoming.some(card => card.reel)) this.board.dataset.wildPhase = elapsed < timing.flight ? "flight" : elapsed < timing.reelEnd ? "hold" : "slide";
       if (elapsed < timing.flight) {

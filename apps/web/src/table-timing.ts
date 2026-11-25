@@ -43,7 +43,7 @@ export function playPhases(queued: boolean, restoring: boolean, wild = false, bu
   };
   let phases = normal;
   if (wild) {
-    const reelEnd = PLAY_TIME * 23 / 10;
+    const reelEnd = PLAY_TIME * 5.5;
     const collapseStart = reelEnd + PLAY_TIME / 5;
     const extra = collapseStart - normal.collapseStart;
     phases = { ...normal, collapseStart, collapseEnd: normal.collapseEnd + extra,
