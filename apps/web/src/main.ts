@@ -6,7 +6,7 @@ import {
   type Card, type Command, type Request, type Response, type Suit, type TableView,
 } from "@crazy-eights/protocol";
 import { DECKS, SUIT_SYMBOL, loadCardArt, suitLabel } from "./cards.ts";
-import { guaranteedSkipFinish, flickPlay, orderFlickGroup } from "./card-gesture.ts";
+import { guaranteedSkipFinish, flickPinsTopCard, flickPlay, orderFlickGroup } from "./card-gesture.ts";
 import { AutomaticActions, type AutomaticAction } from "./automatic-actions.ts";
 import { OpponentReplay } from "./opponent-replay.ts";
 import { roundProgress } from "./round-progress.ts";
@@ -165,7 +165,7 @@ function flickCard(id: number): void {
     playCapacity = Math.max(playCapacity, view.visibleDiscard.length + staged.length);
     render(true);
   };
-  if (play.length > 2 && !guaranteedSkipFinish(play, remaining) && card.special !== "wild" && (staged.length || view.opponentCount > 0)) {
+  if (!flickPinsTopCard(card, remaining, legal, settings) && play.length > 2 && !guaranteedSkipFinish(play, remaining) && card.special !== "wild" && (staged.length || view.opponentCount > 0)) {
     chooseSuit(play.slice(1).map(member => member.suit), suit => commit(orderFlickGroup(play, suit)), "Choose suit");
   } else commit(play);
 }
@@ -407,6 +407,7 @@ function showTable(snapshot: TableView, queue: Card[], animate: boolean, speed =
     keepGroupsTogether: settings.keepGroupsTogether,
     targetCardWidth: settings.targetCardWidth,
     dimUnplayable: settings.dimUnplayable,
+    flickSettings: { ...settings },
     replaying,
     playCapacity: queue.length ? Math.max(playCapacity, snapshot.visibleDiscard.length + queue.length) : 0,
   }, animate && !reducedMotion.matches, speed);
@@ -537,6 +538,7 @@ function setupSettings(): void {
   const groupTwo = element<HTMLInputElement>("group-except-two");
   const automaticDelay = element<HTMLInputElement>("automatic-delay");
   const checks = {
+    flickNonEligibleGroup: "flick-non-eligible-group",
     autoPass: "auto-pass", autoPickup: "auto-pickup", autoSingle: "auto-single",
     autoSingleExcludeWild: "auto-single-exclude-wild", autoSingleExcludeTwo: "auto-single-exclude-two",
     autoSingleExcludeQueen: "auto-single-exclude-queen",

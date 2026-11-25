@@ -3,7 +3,7 @@ import { PLAY_SLOTS, canFollowInQueue, otherSeat, wildSuitOptions, type Card, ty
 import { CardTextures, describeCard, loadCardArt, type FaceTexture } from "./cards.ts";
 import { shuffleFrame } from "./shuffle-animation.ts";
 import { wildReel, wildReelSounds } from "./wild-reel.ts";
-import { isUpwardFlick, queuedCardFlick } from "./card-gesture.ts";
+import { flickPlayableCards, isUpwardFlick, queuedCardFlick, type FlickSettings } from "./card-gesture.ts";
 import {
   ART_HEIGHT, ART_WIDTH, CARD_DEPTH, HAND_FADE_WIDTH, PILE_STEP, artHeight, planTableLayout, opponentPositions, playLandingPositions,
   committedFromPlay, collapsePlayPositions, automaticActionPosition, replayPosition, stockLayerCount, tableLayout, type CardPosition, type QueuedPileSlots,
@@ -37,6 +37,7 @@ class CardImage extends Phaser.GameObjects.Container {
   }
 }
 type BoardState = {
+  flickSettings: FlickSettings;
   view: TableView; staged: Card[]; back: number; locked: boolean; targetCardWidth: number; keepGroupsTogether: boolean; dimUnplayable: boolean; replaying: boolean; playCapacity?: number;
 };
 type Controls = {
@@ -262,7 +263,10 @@ export class CardTable extends Phaser.Scene {
         (staged.length !== previous.staged.length || staged.some((card, index) => card.id !== previous.staged[index]?.id));
       const adjusting = stagingChanged || animate && (previous?.targetCardWidth !== targetCardWidth ||
         previous?.keepGroupsTogether !== this.state?.keepGroupsTogether ||
-        previous?.dimUnplayable !== this.state?.dimUnplayable);
+        previous?.dimUnplayable !== this.state?.dimUnplayable ||
+        previous?.flickSettings.flickNonEligibleGroup !== this.state?.flickSettings.flickNonEligibleGroup ||
+        previous?.flickSettings.groupExceptWild !== this.state?.flickSettings.groupExceptWild ||
+        previous?.flickSettings.groupExceptTwo !== this.state?.flickSettings.groupExceptTwo);
       const initialDeal = motion && !view.event;
       const enemy = opponentPositions(layout, width, view.opponentCount);
       const oldEnemy = motion && priorRound ? opponentPositions(original, width, priorRound.opponentCount) : undefined;
@@ -285,13 +289,15 @@ export class CardTable extends Phaser.Scene {
         const depth = CARD_DEPTH.play + (stagedCommit ? view.visibleDiscard.length : 0) + index;
         return { card, position, dimmed: false, staged: true, depth };
       });
-      const legal = new Set(view.legalLeads);
       const last = staged.at(-1);
+      const remaining = cards.filter(card => !stagedIds.has(card.id));
+      const leads = last ? remaining.filter(card => canFollowInQueue(card, last)).map(card => card.id) : view.legalLeads;
+      const legal = flickPlayableCards(remaining, leads, this.state!.flickSettings);
       const handActive = view.turn === view.seat && !view.result && !view.queuedCards.length;
       const canStage = handActive && staged.length < PLAY_SLOTS;
       const handTargets = handSlots.map((position, index) => {
         const card = cards[index]!;
-        const playable = canStage && (last ? canFollowInQueue(card, last) : legal.has(card.id));
+        const playable = canStage && legal.has(card.id);
         return { card, position, dimmed: !!this.state?.dimUnplayable && handActive && !playable, staged: false, depth: CARD_DEPTH.hand + index };
       }).filter(({ card }) => !stagedIds.has(card.id));
       const buttons = this.placeTargets(stagedTargets, handTargets, view);

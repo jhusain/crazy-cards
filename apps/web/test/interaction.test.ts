@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { GameServer } from "@crazy-eights/game-server";
 import { wildSuitOptions, type Card, type TableView, type TurnEvent } from "@crazy-eights/protocol";
-import { flickPlay, isUpwardFlick, isVerticalFlick, orderFlickGroup, queuedCardFlick } from "../src/card-gesture.ts";
+import { flickPlayableCards, flickPinsTopCard, flickPlay, isUpwardFlick, isVerticalFlick, orderFlickGroup, queuedCardFlick } from "../src/card-gesture.ts";
 import { OpponentReplay } from "../src/opponent-replay.ts";
 import { isDebug } from "../src/play-mode.ts";
 import { ANIMATION_SPEEDS, DEFAULT_SETTINGS, readSettings } from "../src/settings.ts";
@@ -253,4 +253,77 @@ test("queued skip prefixes end at landing and the final pickup waits for pile re
     end: PLAY_TIME + PLAY_SLIDE + STAGE_FLIGHT });
   const draw = drawTimeline(final, 1);
   assert.deepEqual(draw.cardStarts, [reflow.end, reflow.end + draw.duration]);
+});
+
+
+test("optional group flicks put a non-eligible five on top while keeping the matching club first", () => {
+  const clubs: Card = { id: 30, rank: 5, suit: "clubs", special: "normal" };
+  const diamonds: Card = { id: 17, rank: 5, suit: "diamonds", special: "normal" };
+  const spades: Card = { id: 43, rank: 5, suit: "spades", special: "normal" };
+  const hand = [diamonds, spades, clubs];
+  const settings = { ...DEFAULT_SETTINGS, flickNonEligibleGroup: true };
+  const legal = [clubs.id]; // 3 of clubs on the discard pile.
+  for (const random of [() => 0, () => .99]) {
+    assert.deepEqual(flickPlay(diamonds, hand, legal, settings, random), [clubs, spades, diamonds]);
+    assert.deepEqual(flickPlay(spades, hand, legal, settings, random), [clubs, diamonds, spades]);
+  }
+  assert(flickPinsTopCard(diamonds, hand, legal, settings));
+  assert(flickPinsTopCard(spades, hand, legal, settings));
+  // The individually eligible card retains the existing top-suit picker.
+  assert(!flickPinsTopCard(clubs, hand, legal, settings));
+  assert.deepEqual(flickPlay(clubs, hand, legal, settings), [clubs, diamonds, spades]);
+  assert.equal(flickPlay(diamonds, hand, legal, DEFAULT_SETTINGS), undefined);
+  assert.equal(flickPlay(diamonds, hand, [], settings), undefined);
+  assert(!flickPinsTopCard(diamonds, hand, [], settings));
+});
+
+test("when every five can lead, the flicked five ends the group and the others are shuffled", () => {
+  const hand: Card[] = ["clubs", "diamonds", "spades"].map((suit, id) =>
+    ({ id, rank: 5, suit: suit as Card["suit"], special: "normal" }));
+  const legal = hand.map(card => card.id); // 5 of hearts on the discard pile.
+  const settings = { ...DEFAULT_SETTINGS, flickNonEligibleGroup: true };
+  for (const card of hand) {
+    const first = flickPlay(card, hand, legal, settings, () => 0)!;
+    const second = flickPlay(card, hand, legal, settings, () => .99)!;
+    assert.equal(first.at(-1), card);
+    assert.equal(second.at(-1), card);
+    assert.deepEqual(first.slice(0, -1), second.slice(0, -1).reverse());
+    assert.deepEqual(new Set(first), new Set(hand));
+    assert(flickPinsTopCard(card, hand, legal, settings));
+    assert(!flickPinsTopCard(card, hand, legal, DEFAULT_SETTINGS));
+  }
+});
+
+test("shading shares group eligibility and respects flick exclusions and the remaining queue hand", () => {
+  const clubs: Card = { id: 30, rank: 5, suit: "clubs", special: "normal" };
+  const diamonds: Card = { id: 17, rank: 5, suit: "diamonds", special: "normal" };
+  const other: Card = { id: 44, rank: 6, suit: "spades", special: "normal" };
+  const hand = [clubs, diamonds, other];
+  const settings = { ...DEFAULT_SETTINGS, flickNonEligibleGroup: true };
+  assert.deepEqual(flickPlayableCards(hand, [clubs.id], settings), new Set([clubs.id, diamonds.id]));
+  assert.deepEqual(flickPlayableCards(hand, [clubs.id], DEFAULT_SETTINGS), new Set([clubs.id]));
+  assert.deepEqual(flickPlayableCards(hand, [], settings), new Set());
+  // A staged lead is absent from the remaining hand and cannot unlock its group again.
+  assert.deepEqual(flickPlayableCards([diamonds, other], [], settings), new Set());
+  for (const [rank, special, exclusion] of [[2, "pickup", "groupExceptTwo"], [8, "wild", "groupExceptWild"]] as const) {
+    const a = { ...clubs, rank, special }, b = { ...diamonds, rank, special };
+    const group = [a, b];
+    assert.equal(flickPlay(a, group, [a.id], settings), undefined);
+    assert.equal(flickPlay(b, group, [a.id], settings), undefined);
+    assert(!flickPinsTopCard(b, group, [a.id], settings));
+    assert.deepEqual(flickPlayableCards(group, [a.id], settings), new Set([a.id]));
+    const allowed = { ...settings, [exclusion]: false };
+    assert.deepEqual(flickPlayableCards(group, [a.id], allowed), new Set([a.id, b.id]));
+    assert.deepEqual(flickPlay(b, group, [a.id], allowed), [a, b]);
+    assert.deepEqual(flickPlay(a, [a], [a.id], settings), [a]);
+  }
+});
+
+test("non-eligible group flick setting defaults off and persists only boolean true", () => {
+  assert.equal(DEFAULT_SETTINGS.flickNonEligibleGroup, false);
+  for (const value of [undefined, false, null, 1, "true"]) {
+    assert.equal(readSettings({ flickNonEligibleGroup: value }).flickNonEligibleGroup, false);
+  }
+  const saved = { ...DEFAULT_SETTINGS, flickNonEligibleGroup: true };
+  assert.deepEqual(readSettings(JSON.parse(JSON.stringify(saved))), saved);
 });

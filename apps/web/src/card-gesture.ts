@@ -15,13 +15,49 @@ export function queuedCardFlick(dx: number, dy: number, elapsed: number): "play"
   if (dy > 0 && isVerticalFlick(dx, dy, elapsed)) return "clear";
 }
 
+export type FlickSettings = Pick<GameSettings, "groupExceptWild" | "groupExceptTwo" | "flickNonEligibleGroup">;
+
+function excludedGroup(group: readonly Card[], settings: FlickSettings): boolean {
+  return group.length > 1 && group.some(card =>
+    card.special === "wild" && settings.groupExceptWild || card.rank === 2 && settings.groupExceptTwo);
+}
+
+// Shared by flick gestures and hand shading; excluded groups keep individual eligibility.
+export function flickPlayableCards(hand: readonly Card[], legalLeads: readonly number[], settings: FlickSettings): Set<number> {
+  const playable = new Set(legalLeads);
+  if (!settings.flickNonEligibleGroup) return playable;
+  for (const lead of hand.filter(card => playable.has(card.id))) {
+    const group = hand.filter(card => card.rank === lead.rank);
+    if (!excludedGroup(group, settings)) for (const card of group) playable.add(card.id);
+  }
+  return playable;
+}
+
+export function flickPinsTopCard(card: Card, hand: readonly Card[], legalLeads: readonly number[], settings: FlickSettings): boolean {
+  const group = hand.filter(other => other.rank === card.rank);
+  return settings.flickNonEligibleGroup && group.length > 1 && !excludedGroup(group, settings) &&
+    group.some(other => legalLeads.includes(other.id)) &&
+    (!legalLeads.includes(card.id) || group.every(other => legalLeads.includes(other.id)));
+}
+
 export function flickPlay(
-  card: Card, hand: readonly Card[], legalLeads: readonly number[], settings: GameSettings,
+  card: Card, hand: readonly Card[], legalLeads: readonly number[], settings: FlickSettings,
+  random: () => number = Math.random,
 ): Card[] | undefined {
-  if (!legalLeads.includes(card.id)) return;
   const group = [card, ...hand.filter(other => other.id !== card.id && other.rank === card.rank)];
-  if (group.length > 1 && (card.special === "wild" && settings.groupExceptWild || card.rank === 2 && settings.groupExceptTwo)) return;
-  return group;
+  if (excludedGroup(group, settings)) return;
+  if (!legalLeads.includes(card.id) && !flickPlayableCards(hand, legalLeads, settings).has(card.id)) return;
+  if (!flickPinsTopCard(card, hand, legalLeads, settings)) return group;
+
+  const others = group.slice(1);
+  for (let i = others.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1));
+    [others[i], others[j]] = [others[j]!, others[i]!];
+  }
+  // A suit-matched lead must land first; the touched card always lands last.
+  const lead = others.findIndex(other => legalLeads.includes(other.id));
+  others.unshift(...others.splice(lead, 1));
+  return [...others, card];
 }
 
 export function orderFlickGroup(cards: readonly Card[], lastSuit: Suit): Card[] {
