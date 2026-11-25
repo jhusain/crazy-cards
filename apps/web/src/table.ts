@@ -264,6 +264,7 @@ export class CardTable extends Phaser.Scene {
       const adjusting = stagingChanged || animate && (previous?.targetCardWidth !== targetCardWidth ||
         previous?.keepGroupsTogether !== this.state?.keepGroupsTogether ||
         previous?.dimUnplayable !== this.state?.dimUnplayable ||
+        previous?.flickSettings.flickSelectsTopCard !== this.state?.flickSettings.flickSelectsTopCard ||
         previous?.flickSettings.groupExceptWild !== this.state?.flickSettings.groupExceptWild ||
         previous?.flickSettings.groupExceptTwo !== this.state?.flickSettings.groupExceptTwo);
       const initialDeal = motion && !view.event;

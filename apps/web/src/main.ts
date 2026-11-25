@@ -6,7 +6,7 @@ import {
   type Card, type Command, type Request, type Response, type Suit, type TableView,
 } from "@crazy-eights/protocol";
 import { DECKS, SUIT_SYMBOL, loadCardArt, suitLabel } from "./cards.ts";
-import { flickPlay } from "./card-gesture.ts";
+import { flickPlay, flickTopSuitOptions, orderFlickGroup } from "./card-gesture.ts";
 import { AutomaticActions, type AutomaticAction } from "./automatic-actions.ts";
 import { OpponentReplay } from "./opponent-replay.ts";
 import { roundProgress } from "./round-progress.ts";
@@ -165,7 +165,10 @@ function flickCard(id: number): void {
     playCapacity = Math.max(playCapacity, view.visibleDiscard.length + staged.length);
     render(true);
   };
-  commit(play);
+  const suits = flickTopSuitOptions(play, settings);
+  if (suits.length && (staged.length || view.opponentCount > 0)) {
+    chooseSuit(suits, suit => commit(orderFlickGroup(play, suit)), "Choose suit");
+  } else commit(play);
 }
 
 function clearPlay(): void {
@@ -208,9 +211,9 @@ function choosePlay(cards: Card[], direct = false): void {
   chooseSuit(suits, submit);
 }
 
-function chooseSuit(suits: readonly Suit[], submit: (suit: Suit) => void): void {
+function chooseSuit(suits: readonly Suit[], submit: (suit: Suit) => void, title = "Call a suit"): void {
   cancelAutomaticAction();
-  element("suit-title").textContent = "Call a suit";
+  element("suit-title").textContent = title;
   const buttons = suits.map(suit => {
     const button = document.createElement("button");
     button.className = "suit-choice";
@@ -536,6 +539,7 @@ function setupSettings(): void {
   const groupTwo = element<HTMLInputElement>("group-except-two");
   const automaticDelay = element<HTMLInputElement>("automatic-delay");
   const checks = {
+    flickSelectsTopCard: "flick-selects-top-card",
     autoPass: "auto-pass", autoPickup: "auto-pickup", autoSingle: "auto-single",
     autoSingleExcludeWild: "auto-single-exclude-wild", autoSingleExcludeTwo: "auto-single-exclude-two",
     autoSingleExcludeQueen: "auto-single-exclude-queen",
