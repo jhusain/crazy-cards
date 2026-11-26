@@ -83,15 +83,15 @@ test("drawing resets skip carryover, and intrinsic quadruple points do not carry
   assert.equal(play(uninterrupted, [card(7, "spades")], 1), 0);
 });
 
-test("suit restoration survives skips but is awarded only on the final non-skip play", () => {
+test("restoring the previous suit after skips adds no aggression beyond skip carryover", () => {
   const server = position([card(3, "hearts"), card(5, "spades")],
     [card(11, "hearts"), card(11, "diamonds"), card(7, "diamonds"), card(7, "clubs"), card(5, "hearts")]);
   assert.equal(play(server, [card(3, "hearts")]), 0);
   assert.equal(play(server, [card(11, "hearts"), card(11, "diamonds")], 1), 1);
-  assert.equal(play(server, [card(7, "diamonds"), card(7, "clubs")], 1), 2);
+  assert.equal(play(server, [card(7, "diamonds"), card(7, "clubs")], 1), 1);
 });
 
-test("empty opponent hands and drawing exclude the suit-restoration bonus", () => {
+test("restoring a suit adds no bonus with an empty hand or after drawing", () => {
   const three = card(3, "hearts"), restore = card(7, "clubs");
   const empty = position([three], [card(11, "hearts"), card(7, "hearts"), restore, card(5, "hearts")]);
   play(empty, [three]);
@@ -104,11 +104,11 @@ test("empty opponent hands and drawing exclude the suit-restoration bonus", () =
   assert.equal(play(drawn, [card(7, "hearts"), restore], 1), 0);
 });
 
-test("wild suit restoration uses the declared suit and resets for a new round", () => {
+test("a wild restoring the previous suit adds no bonus; a new round clears skip carryover", () => {
   const wild = card(8, "spades");
   const server = position([card(3, "hearts"), card(5, "spades")], [wild, card(5, "hearts")]);
   play(server, [card(3, "hearts")]);
-  assert.equal(play(server, [wild], 1, "clubs"), 1);
+  assert.equal(play(server, [wild], 1, "clubs"), 0);
   const ending = position([card(11, "clubs")], []);
   assert.equal(play(ending, [card(11, "clubs")]), 2);
   send(ending, 0, { type: "next-round" });
@@ -214,7 +214,7 @@ test("the eight-card debug test keeps the same player hand and opening, with car
   assert(server.stepAutomatic());
   assert.equal(server.view(0).event?.aggressiveness, 3);
   assert(server.stepAutomatic());
-  assert.equal(server.view(0).event?.aggressiveness, 9);
+  assert.equal(server.view(0).event?.aggressiveness, 8);
   assert.equal(server.view(0).opponentCount, 15);
 });
 
