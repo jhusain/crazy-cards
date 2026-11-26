@@ -374,6 +374,8 @@ function updateControls(): void {
     staged.length ? `Play ${staged.length} queued ${staged.length === 1 ? "card" : "cards"}`
       : debug && !autoplay ? "Play this turn using the AI" : drew ? "Pass your turn using the discard pile" : "Discard pile");
   element("debug-controls").hidden = !debug;
+  element("debug-settings").hidden = !debug;
+  element<HTMLButtonElement>("test-aggressiveness").disabled = !debug || !view || !inputReady();
   autoplayCheck.disabled = !view || !!view.matchResult || shuffleLocked();
   autoplayCheck.checked = autoplay;
   element("player-name").textContent = autoplay ? "Player AI" : "You";
@@ -653,6 +655,14 @@ function setupDialogs(): void {
   element("confirm-restart").onclick = () => {
     restartDialog.close();
     send({ type: "restart" });
+  };
+  element("test-aggressiveness").onclick = () => {
+    if (!debug || !view || !inputReady()) return;
+    if (autoplay) setAutoplay(false);
+    staged = [];
+    playCapacity = 0;
+    settingsDialog.close();
+    send({ type: "debug-aggressiveness" });
   };
   for (const button of document.querySelectorAll<HTMLButtonElement>("dialog [data-close]")) {
     button.onclick = () => button.closest("dialog")?.close();

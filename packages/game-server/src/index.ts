@@ -11,7 +11,7 @@ function isRequest(value: unknown): value is Request {
   const { requestId, revision, command } = value as Partial<Request>;
   if (!Number.isSafeInteger(requestId) || !Number.isSafeInteger(revision) || !command || typeof command !== "object") return false;
   switch (command.type) {
-    case "snapshot": case "draw": case "pass": case "next-round": case "restart": case "auto-play": case "debug-reshuffle":
+    case "snapshot": case "draw": case "pass": case "next-round": case "restart": case "auto-play": case "debug-reshuffle": case "debug-aggressiveness":
       return true;
     case "play":
     case "play-queue":
@@ -130,7 +130,7 @@ export class GameServer {
       if (!isRequest(parsed)) throw new Error("Invalid game request.");
       requestId = parsed.requestId;
       if (parsed.command.type !== "snapshot") {
-        if (seat === this.cpuSeat || this.autoplay && parsed.command.type !== "restart" && parsed.command.type !== "next-round" && parsed.command.type !== "debug-reshuffle") {
+        if (seat === this.cpuSeat || this.autoplay && parsed.command.type !== "restart" && parsed.command.type !== "next-round" && parsed.command.type !== "debug-reshuffle" && parsed.command.type !== "debug-aggressiveness") {
           throw new Error("That seat is controlled by the computer.");
         }
         if (parsed.revision !== this.revision) throw new Error("The table has already changed. Try again.");
@@ -198,6 +198,9 @@ export class GameServer {
       if (!this.result) throw new Error("Finish this round first.");
       if (this.matchResult) throw new Error("This match is over. Start a new match.");
       this.deal();
+    } else if (command.type === "debug-aggressiveness") {
+      if (!this.debug) throw new Error("Enable debug mode to test aggressiveness.");
+      this.testAggressiveness(seat);
     } else if (this.queued) {
       throw new Error("Wait for the queued plays to finish.");
     } else if (command.type === "debug-reshuffle") {
@@ -218,6 +221,34 @@ export class GameServer {
     } else {
       this.move(seat, command);
     }
+  }
+
+  private testAggressiveness(seat: Seat): void {
+    const deck = standardDeck();
+    const hand = deck.filter(card => card.rank === 11 || card.rank === 1 || card.rank === 2);
+    const lastCard = deck.find(card => card.rank === 3 && card.suit === "clubs")!;
+    const top = deck.find(card => card.rank === 3 && card.suit === "hearts")!;
+    const used = new Set([...hand, lastCard, top].map(card => card.id));
+    this.hands = seat === 0 ? [hand, [lastCard]] : [[lastCard], hand];
+    this.stock = deck.filter(card => !used.has(card.id));
+    this.discard = [];
+    this.lastPlay = [top];
+    this.lastPlaySize = 1;
+    this.points = [0, 0];
+    this.roundsWon = [0, 0];
+    this.roundStartingPpc = this.pointsPerCard = 1;
+    this.matchResult = this.result = null;
+    this.round = 1;
+    this.turn = this.first = otherSeat(seat);
+    this.nextFirst = null;
+    this.drewThisTurn = false;
+    this.passesWithoutProgress = 0;
+    this.event = this.queued = null;
+    this.skipAggression = 0;
+    this.skipRank = null;
+    this.restoreSuit = [null, null];
+    this.autoplay = false;
+    this.revision++;
   }
 
   private playQueue(seat: Seat, ids: number[], suit?: Card["suit"]): void {

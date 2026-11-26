@@ -116,3 +116,75 @@ test("wild suit restoration uses the declared suit and resets for a new round", 
     lastPlay: [card(9, "clubs")] });
   assert.equal(play(ending, [card(7, "clubs")]), 0);
 });
+
+test("the aggressiveness test is debug-only and denial leaves the table untouched", () => {
+  const server = new GameServer(1, () => 0);
+  const before = server.view(0);
+  const response = JSON.parse(server.handleJSON(0, JSON.stringify({ requestId: 1,
+    revision: before.revision, command: { type: "debug-aggressiveness" } }))) as Response;
+  assert.equal(response.type, "error");
+  assert.deepEqual(server.view(0), before);
+});
+
+test("the debug example starts with the opponent's final card and reaches scores 2,3,9", () => {
+  const server = new GameServer(1, () => 0, true);
+  server.setDebug(true);
+  const initial = send(server, 0, { type: "debug-aggressiveness" });
+  assert.equal(initial.turn, 1);
+  assert.equal(initial.opponentCount, 1);
+  assert.equal(initial.stockCount, 38);
+  assert.deepEqual(initial.hand.map(card => card.rank).sort((a, b) => a - b),
+    [1, 1, 1, 1, 2, 2, 2, 2, 11, 11, 11, 11]);
+  assert.deepEqual(initial.visibleDiscard, [card(3, "hearts")]);
+  assert.deepEqual(server.view(1).hand, [card(3, "clubs")]);
+  assert.equal(server.automaticMove, "computer");
+  assert(server.stepAutomatic());
+  assert.equal(server.view(0).opponentCount, 0);
+  assert.equal(server.view(0).turn, 0);
+  assert.equal(server.cpuIsUp, false); // Exhibition autoplay has been turned off.
+  assert.deepEqual(server.view(0).event?.cards, [card(3, "clubs")]);
+  assert.equal(server.view(0).event?.aggressiveness, 1);
+
+  const jacks = ["clubs", "hearts", "spades", "diamonds"].map(suit => card(11, suit as Suit));
+  const aces = ["diamonds", "hearts", "spades", "clubs"].map(suit => card(1, suit as Suit));
+  const twos = ["clubs", "diamonds", "spades", "hearts"].map(suit => card(2, suit as Suit));
+  assert.equal(send(server, 0, { type: "play-queue", cards: [...jacks, ...aces, ...twos].map(card => card.id) }).event?.aggressiveness, 2);
+  assert(server.stepAutomatic());
+  assert.equal(server.view(0).event?.aggressiveness, 3);
+  assert(server.stepAutomatic());
+  const final = server.view(0);
+  assert.equal(final.event?.aggressiveness, 9);
+  assert.equal(final.visibleDiscard.at(-1)?.id, card(2, "hearts").id);
+  assert.equal(final.hand.length, 0);
+  assert.equal(final.event?.penalty?.count, 8);
+  assert.equal(final.opponentCount, 8);
+  const repeated = send(server, 0, { type: "debug-aggressiveness" });
+  assert.deepEqual({ ...repeated, revision: initial.revision }, initial);
+});
+
+test("reloading the debug example clears queued plays and previous match state", () => {
+  const server = new GameServer(1, () => 0);
+  server.setDebug(true);
+  send(server, 0, { type: "debug-aggressiveness" });
+  server.stepAutomatic();
+  const jacks = ["clubs", "hearts", "spades", "diamonds"].map(suit => card(11, suit as Suit));
+  const ace = card(1, "diamonds");
+  send(server, 0, { type: "play-queue", cards: [...jacks, ace].map(card => card.id) });
+  assert.equal(server.automaticMove, "queued");
+  Object.assign(server, { points: [50, -50], roundsWon: [2, 1], pointsPerCard: 8,
+    result: { winner: 0, points: 50 }, matchResult: { winner: 0, points: 50, roundsWon: [2, 1] } });
+  const fresh = send(server, 0, { type: "debug-aggressiveness" });
+  assert.deepEqual(fresh.points, [0, 0]);
+  assert.deepEqual(fresh.roundsWon, [0, 0]);
+  assert.equal(fresh.pointsPerCard, 1);
+  assert.equal(fresh.result, null);
+  assert.equal(fresh.matchResult, null);
+  assert.equal(fresh.event, null);
+  assert.equal(fresh.drewThisTurn, false);
+  assert.deepEqual(fresh.queuedCards, []);
+  assert.equal(server.automaticMove, "computer");
+  const all = [...fresh.hand, ...server.view(1).hand, ...fresh.lastPlay,
+    ...(Reflect.get(server, "stock") as Card[])];
+  assert.equal(all.length, 52);
+  assert.equal(new Set(all.map(card => card.id)).size, 52);
+});

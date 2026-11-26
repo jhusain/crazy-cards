@@ -21,7 +21,8 @@ export const PLAY_SLOTS = 12;
 export type PlayMove = { type: "play"; cards: number[]; suit?: Suit };
 export type Move = PlayMove | { type: "draw" } | { type: "pass" };
 export type Command = Move | { type: "play-queue"; cards: number[]; suit?: Suit }
-  | { type: "snapshot" } | { type: "next-round" } | { type: "restart" } | { type: "auto-play" } | { type: "debug-reshuffle" };
+  | { type: "snapshot" } | { type: "next-round" } | { type: "restart" } | { type: "auto-play" } | { type: "debug-reshuffle" }
+  | { type: "debug-aggressiveness" };
 
 export interface Request {
   requestId: number;
