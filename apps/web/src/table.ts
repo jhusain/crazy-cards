@@ -3,7 +3,7 @@ import { PLAY_SLOTS, canFollowInQueue, otherSeat, wildSuitOptions, type Card, ty
 import { CardTextures, describeCard, loadCardArt, type FaceTexture } from "./cards.ts";
 import { shuffleFrame } from "./shuffle-animation.ts";
 import { wildReel, wildReelSounds } from "./wild-reel.ts";
-import { gentlePlayFrame, slamFlight, slamPlayFlight, slamShadow, impactEnvelope, scatteredCard, tableShock } from "./play-impact.ts";
+import { quietPlayProgress, slamFlight, slamPlayFlight, slamShadow, impactEnvelope, scatteredCard, tableShock } from "./play-impact.ts";
 import { flickPlayableCards, isUpwardFlick, queuedCardFlick, type FlickSettings } from "./card-gesture.ts";
 import {
   ART_HEIGHT, ART_WIDTH, CARD_DEPTH, HAND_FADE_WIDTH, PILE_STEP, artHeight, planTableLayout, opponentPositions, playLandingPositions,
@@ -529,7 +529,7 @@ export class CardTable extends Phaser.Scene {
     const outgoingTargets = prior;
     const timing = phases ?? playPhases(alreadyQueued, false, opponentWildPlay(view), view.event!.burnsPreviousPlay, view.event!.aggressiveness);
     const score = view.event!.aggressiveness ?? 0;
-    const shadow = score > 0 || !alreadyQueued ? this.add.graphics().setDepth((alreadyQueued ? CARD_DEPTH.play : CARD_DEPTH.staging + PLAY_SLOTS) - .5) : undefined;
+    const shadow = score > 0 ? this.add.graphics().setDepth((alreadyQueued ? CARD_DEPTH.play : CARD_DEPTH.staging + PLAY_SLOTS) - .5) : undefined;
     const fire = timing.burnStart !== null ? this.add.graphics().setDepth(CARD_DEPTH.discard + old.length - .5) : undefined;
     const anchor = outgoingTargets[0]!;
     const collapsedPositions = collapsePlayPositions(anchor, last.length);
@@ -575,21 +575,16 @@ export class CardTable extends Phaser.Scene {
         outgoing.forEach((image, index) => this.moveCard(image, prior[index]!, outgoingTargets[index]!, spread));
         const raised = score > 0 ? slamPlayFlight(incoming.map(card => card.from), incoming.map(card => card.appended),
           elapsed, timing.flight, score, width, layout.inset + HAND_FADE_WIDTH) : undefined;
-        const gentle = score === 0 && !alreadyQueued
-          ? incoming.map(({ from, appended }) => gentlePlayFrame(from, appended, elapsed, timing.flight)) : undefined;
         incoming.forEach(({ image, from, appended, id }, index) => {
           if (score > 0) {
             const position = raised![index]!;
             this.placeImage(image, position);
             this.priorCardPositions.set(id, position);
-          } else if (gentle) {
-            this.placeImage(image, gentle[index]!.position);
-            this.priorCardPositions.set(id, gentle[index]!.position);
-          } else this.moveCard(image, from, appended, unit((flight - index * .055) / .835), id, alreadyQueued ? 0 : 18);
+          } else this.moveCard(image, from, appended, quietPlayProgress(elapsed, timing.flight), id);
         });
         shadow?.clear();
-        incoming.forEach(({ from, appended }, index) => {
-          const cast = gentle?.[index]?.shadow ?? slamShadow(from, appended, elapsed, timing.flight, score);
+        if (shadow) incoming.forEach(({ from, appended }, index) => {
+          const cast = slamShadow(from, appended, elapsed, timing.flight, score);
           if (raised) {
             const raw = slamFlight(from, appended, elapsed, timing.flight, score);
             const fitted = raised[index]!;
