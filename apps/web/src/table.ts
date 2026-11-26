@@ -699,14 +699,14 @@ export class CardTable extends Phaser.Scene {
     const palette = chargePalette(progress);
     graphics.fillStyle(palette.base, 1);
     graphics.fillRect(0, 0, width, height);
-    // Oversized wedges cover every corner as the green and gold sunburst rotates.
+    // Stationary wedges swap green and gold rapidly while fading to white.
     const radius = Math.max(...[0, width].flatMap(x => [0, height].map(y => Math.hypot(x - center.x, y - center.y)))) * 2;
     const count = 24;
-    const rotation = elapsed * .0007;
+    const colorPhase = Math.floor(elapsed / 70) % 2;
     for (let ray = 0; ray < count; ray++) {
-      const start = rotation + ray * Math.PI * 2 / count;
-      const end = rotation + (ray + 1) * Math.PI * 2 / count;
-      graphics.fillStyle(palette.rays[ray % palette.rays.length]!, 1);
+      const start = ray * Math.PI * 2 / count;
+      const end = (ray + 1) * Math.PI * 2 / count;
+      graphics.fillStyle(palette.rays[(ray + colorPhase) % palette.rays.length]!, 1);
       graphics.fillTriangle(center.x, center.y,
         center.x + Math.cos(start) * radius, center.y + Math.sin(start) * radius,
         center.x + Math.cos(end) * radius, center.y + Math.sin(end) * radius);
