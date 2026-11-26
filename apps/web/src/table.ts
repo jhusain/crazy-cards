@@ -3,7 +3,7 @@ import { PLAY_SLOTS, canFollowInQueue, otherSeat, wildSuitOptions, type Card, ty
 import { CardTextures, describeCard, loadCardArt, type FaceTexture } from "./cards.ts";
 import { shuffleFrame } from "./shuffle-animation.ts";
 import { wildReel, wildReelSounds } from "./wild-reel.ts";
-import { slamFlight, impactEnvelope, scatteredCard, tableShock } from "./play-impact.ts";
+import { slamFlight, slamShadow, impactEnvelope, scatteredCard, tableShock } from "./play-impact.ts";
 import { flickPlayableCards, isUpwardFlick, queuedCardFlick, type FlickSettings } from "./card-gesture.ts";
 import {
   ART_HEIGHT, ART_WIDTH, CARD_DEPTH, HAND_FADE_WIDTH, PILE_STEP, artHeight, planTableLayout, opponentPositions, playLandingPositions,
@@ -579,10 +579,15 @@ export class CardTable extends Phaser.Scene {
           } else this.moveCard(image, from, appended, unit((flight - index * .055) / .835), id, alreadyQueued ? 0 : 18);
         });
         shadow?.clear();
-        incoming.forEach(({ appended }) => {
-          shadow?.fillStyle(0x000000, .13);
-          shadow?.fillEllipse(appended.x + appended.width / 2, appended.y + artHeight(appended.width) / 2,
-            appended.width * .95, artHeight(appended.width) * .9);
+        incoming.forEach(({ from, appended }) => {
+          const cast = slamShadow(from, appended, elapsed, timing.flight, score);
+          // Feathered card silhouettes sit above the board/old cards and below the raised play.
+          for (let layer = 5; layer >= 0; layer--) {
+            const spread = cast.blur * layer / 5;
+            shadow?.fillStyle(0x000000, cast.alpha / 6);
+            shadow?.fillRoundedRect(cast.x - spread, cast.y - spread,
+              cast.width + spread * 2, cast.height + spread * 2, cast.width * .045 + spread);
+          }
         });
         return;
       }
@@ -651,7 +656,7 @@ export class CardTable extends Phaser.Scene {
       }
       const shake = tableShock(elapsed, timing.flight, score);
       this.board.style.transform = `translate(${shake.x}px, ${shake.y}px)`;
-      if (score < 5) return;
+      if (score < 4) return;
       const amount = impactEnvelope(elapsed, timing.flight, timing.collapseStart, timing.collapseEnd);
       this.impactCards.forEach(({ image, home, id }, index) => {
         const scattered = scatteredCard(home, origin, score, index, towardPlayer, amount);

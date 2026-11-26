@@ -51,22 +51,22 @@ test("twos count actual trailing discards, even beyond the visible last play", (
   assert.equal(play(interrupted, [two]), 1);
 });
 
-test("repeated skip ranks score 0,1,1,1 then 1,2,2,2; final twos score nine", () => {
+test("repeated skip ranks score 1,2,2,2 then 2,3,3,3; final twos score nine", () => {
   const jacks = ["clubs", "hearts", "spades", "diamonds"].map(suit => card(11, suit as Suit));
   const aces = ["diamonds", "clubs", "spades", "hearts"].map(suit => card(1, suit as Suit));
   const twos = ["hearts", "clubs", "spades", "diamonds"].map(suit => card(2, suit as Suit));
   const server = position([...jacks, ...aces, ...twos], []);
-  assert.deepEqual([...jacks, ...aces].map(card => play(server, [card])), [0, 1, 1, 1, 1, 2, 2, 2]);
+  assert.deepEqual([...jacks, ...aces].map(card => play(server, [card])), [1, 2, 2, 2, 2, 3, 3, 3]);
   assert.equal(play(server, twos), 9);
 });
 
-test("staging a jack quadruple, ace quadruple and two quadruple emits scores 1,2,9", () => {
+test("staging a jack quadruple, ace quadruple and two quadruple emits scores 2,3,9", () => {
   const jacks = quad(11), aces = quad(1).reverse(), twos = quad(2);
   const server = position([...jacks, ...aces, ...twos], [], card(3, "hearts"));
   const first = send(server, 0, { type: "play-queue", cards: [...jacks, ...aces, ...twos].map(card => card.id) });
-  assert.equal(first.event?.aggressiveness, 1);
+  assert.equal(first.event?.aggressiveness, 2);
   assert(server.stepAutomatic());
-  assert.equal(server.view(0).event?.aggressiveness, 2);
+  assert.equal(server.view(0).event?.aggressiveness, 3);
   assert(server.stepAutomatic());
   assert.equal(server.view(0).event?.aggressiveness, 9);
 });
@@ -74,11 +74,11 @@ test("staging a jack quadruple, ace quadruple and two quadruple emits scores 1,2
 test("drawing resets skip carryover, and intrinsic quadruple points do not carry", () => {
   const jacks = quad(11), two = card(2, "spades");
   const server = position([...jacks, two, card(5, "clubs")], [card(7, "hearts")], card(3, "hearts"));
-  assert.equal(play(server, jacks), 1);
+  assert.equal(play(server, jacks), 2);
   send(server, 0, { type: "draw" });
   assert.equal(play(server, [two]), 1);
   const uninterrupted = position([...jacks, two, card(5, "clubs")], [card(7, "spades")], card(3, "hearts"));
-  assert.equal(play(uninterrupted, jacks), 1);
+  assert.equal(play(uninterrupted, jacks), 2);
   assert.equal(play(uninterrupted, [two]), 2);
   assert.equal(play(uninterrupted, [card(7, "spades")], 1), 0);
 });
@@ -87,7 +87,7 @@ test("suit restoration survives skips but is awarded only on the final non-skip 
   const server = position([card(3, "hearts"), card(5, "spades")],
     [card(11, "hearts"), card(11, "diamonds"), card(7, "diamonds"), card(7, "clubs"), card(5, "hearts")]);
   assert.equal(play(server, [card(3, "hearts")]), 0);
-  assert.equal(play(server, [card(11, "hearts"), card(11, "diamonds")], 1), 0);
+  assert.equal(play(server, [card(11, "hearts"), card(11, "diamonds")], 1), 1);
   assert.equal(play(server, [card(7, "diamonds"), card(7, "clubs")], 1), 2);
 });
 
@@ -110,7 +110,7 @@ test("wild suit restoration uses the declared suit and resets for a new round", 
   play(server, [card(3, "hearts")]);
   assert.equal(play(server, [wild], 1, "clubs"), 1);
   const ending = position([card(11, "clubs")], []);
-  assert.equal(play(ending, [card(11, "clubs")]), 1);
+  assert.equal(play(ending, [card(11, "clubs")]), 2);
   send(ending, 0, { type: "next-round" });
   Object.assign(ending, { hands: [[card(7, "clubs"), card(5, "clubs")], [card(3, "hearts")]], turn: 0,
     lastPlay: [card(9, "clubs")] });

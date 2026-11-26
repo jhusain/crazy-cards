@@ -26,7 +26,7 @@ test("normal mode, duplicate snapshots, and non-play events never announce a sco
 
 test("each individual play in a staged sequence produces its own toast", () => {
   let previous = before;
-  for (const score of [1, 2, 9]) {
+  for (const score of [2, 3, 9]) {
     const current = { ...previous, revision: previous.revision + 1,
       event: { kind: "play" as const, seat: 0 as const, aggressiveness: score } };
     assert.equal(debugPlayMessage(previous, current, true), `Your play: aggressiveness ${score}`);

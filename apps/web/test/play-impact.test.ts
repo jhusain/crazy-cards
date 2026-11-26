@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { otherSeat } from "@crazy-eights/protocol";
 import { GameServer } from "@crazy-eights/game-server";
-import { slamFlight, impactEnvelope, scatteredCard, tableShock } from "../src/play-impact.ts";
+import { slamFlight, slamShadow, impactEnvelope, scatteredCard, tableShock } from "../src/play-impact.ts";
 import { drawTimeline, playPhases, playReflow, tableAnimationTime, PLAY_FLIGHT, PLAY_HOLD, PLAY_TIME } from "../src/table-timing.ts";
 import { artHeight } from "../src/table-layout.ts";
 
@@ -43,6 +43,32 @@ test("higher aggression spends less time descending", () => {
   assert(high.width > low.width);
 });
 
+test("raised cards project a moving shadow onto the surface below and lose it on landing", () => {
+  for (const staged of [false, true]) for (const score of [1, 4, 9]) {
+    const source = staged ? { ...landing, x: landing.x + 100 } : from;
+    const flight = playPhases(staged, false, false, false, score).flight;
+    const atStart = slamShadow(source, landing, 0, flight, score);
+    assert.equal(atStart.alpha, 0);
+    assert.equal(atStart.x, source.x);
+    assert.equal(atStart.y, source.y);
+    const elapsed = flight - 115 / (1 + score * .18);
+    const raised = slamFlight(source, landing, elapsed, flight, score);
+    const shadow = slamShadow(source, landing, elapsed, flight, score);
+    assert(shadow.y > raised.y);
+    assert(shadow.x > raised.x);
+    assert(shadow.blur > 0);
+    assert(shadow.alpha > 0 && shadow.alpha <= .24);
+    // The shadow stays on the surface at the projected card size, below its raised silhouette.
+    assert(shadow.width < raised.width);
+    assert.equal(shadow.height, artHeight(shadow.width));
+    const contact = slamShadow(source, landing, flight, flight, score);
+    assert(contact.alpha < 1e-8);
+    assert(contact.blur < 1e-8);
+    assert(Math.abs(contact.x - landing.x) < 1e-8);
+    assert(Math.abs(contact.y - landing.y) < 1e-8);
+  }
+});
+
 test("table shake scales linearly with score and stops completely", () => {
   for (const elapsed of [10, 30, 90, 150]) {
     const low = tableShock(elapsed, 0, 1), high = tableShock(elapsed, 0, 9);
@@ -53,21 +79,21 @@ test("table shake scales linearly with score and stops completely", () => {
   assert.deepEqual(tableShock(400, 100, 9), { x: 0, y: 0 });
 });
 
-test("only scores five and above scatter the other hand, radially toward its own edge", () => {
+test("only scores four and above scatter the other hand, radially toward its own edge", () => {
   const origin = { x: 200, y: 350, width: 100 };
   for (const towardPlayer of [false, true]) {
     const handY = towardPlayer ? 590 : -50;
     const positions = [20, 120, 230, 330].map(x => ({ x, y: handY, width: 90 }));
     positions.forEach((home, index) => {
-      assert.deepEqual(scatteredCard(home, origin, 4, index, towardPlayer, 1), { position: home, angle: 0 });
-      const five = scatteredCard(home, origin, 5, index, towardPlayer, 1);
+      assert.deepEqual(scatteredCard(home, origin, 3, index, towardPlayer, 1), { position: home, angle: 0 });
+      const four = scatteredCard(home, origin, 4, index, towardPlayer, 1);
       const nine = scatteredCard(home, origin, 9, index, towardPlayer, 1);
-      assert(towardPlayer ? five.position.y > home.y : five.position.y < home.y);
-      assert((five.position.x - home.x) * (home.x + home.width / 2 - origin.x) >= 0);
-      assert(Math.abs(nine.position.x - home.x - (five.position.x - home.x) * 5) < 1e-8);
-      assert(Math.abs(nine.position.y - home.y - (five.position.y - home.y) * 5) < 1e-8);
+      assert(towardPlayer ? four.position.y > home.y : four.position.y < home.y);
+      assert((four.position.x - home.x) * (home.x + home.width / 2 - origin.x) >= 0);
+      assert(Math.abs(nine.position.x - home.x - (four.position.x - home.x) * 6) < 1e-8);
+      assert(Math.abs(nine.position.y - home.y - (four.position.y - home.y) * 6) < 1e-8);
       assert.deepEqual(scatteredCard(home, origin, 9, index, towardPlayer, 0), { position: home, angle: 0 });
-      assert.equal(artHeight(five.position.width), artHeight(home.width));
+      assert.equal(artHeight(four.position.width), artHeight(home.width));
     });
   }
 });
