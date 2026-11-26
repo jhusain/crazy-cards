@@ -9,6 +9,10 @@ export class OpponentReplay {
   private current?: OpponentTurn;
   last?: OpponentTurn;
 
+  network = false;
+
+  reset(): void { this.current = this.last = undefined; }
+
   record(before: TableView | undefined, after: TableView): void {
     if (!before || before.revision === after.revision) return;
     if (!after.event || after.event.kind === "shuffle" || before.round !== after.round) {
@@ -16,6 +20,13 @@ export class OpponentReplay {
       return;
     }
     const humanMove = after.event.seat === after.seat;
+    if (this.network) {
+      if (humanMove) { this.current = undefined; return; }
+      this.current ??= { before, frames: [] };
+      this.current.frames.push(after);
+      this.last = this.current;
+      return;
+    }
     const forced = before.turn === after.seat && before.legalLeads.length === 0 && after.event.kind !== "play";
     if (humanMove && !forced) {
       this.current = undefined;

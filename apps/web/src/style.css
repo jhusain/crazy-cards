@@ -437,3 +437,7 @@ dialog p { font-size: 14px; line-height: 1.45; }
 #match-rounds { max-width: 230px; margin-top: 8px; font-size: 14px; color: var(--gold); white-space: pre-line; }
 
 .game-menu button:disabled { opacity: .45; }
+
+#network-link { display: block; width: 100%; margin: 12px 0; padding: 12px; border: 1px solid #ceb078; border-radius: 6px; background: #151217; color: #ffefd2; font: inherit; font-size: 14px; }
+.network-actions { display: flex; gap: 12px; flex-wrap: wrap; }
+#network-dialog .dialog-heading h2 { font-size: 30px; }

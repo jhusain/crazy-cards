@@ -15,6 +15,8 @@ import { debugPlayMessage } from "./debug-play.ts";
 import { ANIMATION_SPEEDS, DEFAULT_SETTINGS, readSettings, type GameSettings } from "./settings.ts";
 import { CardTable } from "./table.ts";
 import { replayDelay, replaySpeed, STAGE_FLIGHT, tableAnimationTime, type TableTiming } from "./table-timing.ts";
+import { NetworkConnection, type GameConnection } from "./network.ts";
+import { invitationFromHash, invitationUrl, type Invitation } from "./network-protocol.ts";
 import LocalServer from "./game.worker.ts?worker&inline";
 import "@fontsource/barlow-condensed/latin-700.css";
 import "@fontsource/barlow-condensed/latin-800.css";
@@ -77,7 +79,11 @@ let automaticSession: { revision: number; action: AutomaticAction } | undefined;
 let canceledAutomaticRevision: number | undefined;
 let requestId = 0;
 let message: string | undefined;
-let worker: Worker | undefined;
+let worker: GameConnection | undefined;
+let network: NetworkConnection | undefined;
+let networkReady = false;
+let networkGeneration = 0;
+const networkDialog = element<HTMLDialogElement>("network-dialog");
 let scene: CardTable | undefined;
 let announcedResultRevision: number | undefined;
 let paintedRevision: number | undefined;
@@ -91,7 +97,7 @@ function cancelDeckTap(): void {
 }
 
 function send(command: Command): number | undefined {
-  if (busy !== undefined || !worker || replaying) return;
+  if (busy !== undefined || !worker || replaying || network && !networkReady) return;
   cancelDeckTap();
   cancelAutomaticAction();
   pendingCommand = command;
@@ -106,9 +112,9 @@ function send(command: Command): number | undefined {
 const isMyTurn = () => view !== undefined && view.turn === view.seat;
 const isQueued = () => !!view?.queuedCards.length;
 const shuffleLocked = () => !replaying && animationTimer !== undefined && !!view?.event?.reshuffles?.length;
-const inputReady = () => !replaying && busy === undefined && animationTimer === undefined;
+const inputReady = () => (!network || networkReady) && !replaying && busy === undefined && animationTimer === undefined;
 const canUseStock = () => !autoplay && inputReady() && isMyTurn() && !isQueued();
-const canDebugShuffle = () => debug && !!view && !view.result && inputReady() && !isQueued();
+const canDebugShuffle = () => !network && debug && !!view && !view.result && inputReady() && !isQueued();
 const canUseDiscard = () => !autoplay && inputReady() && (!!view?.result || isMyTurn() && !isQueued() && (staged.length > 0 || !!view?.drewThisTurn || debug));
 const canReplay = () => canUseStock() && !!view?.legalLeads.length && !!history.last;
 
@@ -321,6 +327,7 @@ function showNotice(text: string): void {
 
 function announce(): void {
   if (!view) return;
+  const rival = network ? "Opponent" : "Computer";
   if (!view.result && roundDialog.open) roundDialog.close();
   if (message) {
     showNotice(message);
@@ -331,14 +338,14 @@ function announce(): void {
     const result = view.matchResult ?? view.result;
     const match = !!view.matchResult;
     const title = result.winner === "tie" ? match ? "Match tied" : "Round tied" :
-      result.winner === view.seat ? match ? "You win the match" : "You win" : match ? "Computer wins the match" : "Computer wins";
+      result.winner === view.seat ? match ? "You win the match" : "You win" : match ? `${rival} wins the match` : `${rival} wins`;
     const points = result.winner === "tie" ? match ? "0 points" : "No points awarded" :
       `${match ? "" : "+"}${result.points} ${result.points === 1 ? "point" : "points"}`;
     element("round-title").textContent = title;
     element("round-points").textContent = points;
     const wins = element("match-rounds");
     wins.hidden = !match;
-    wins.textContent = `Rounds won\nYou ${view.roundsWon[view.seat]} · Computer ${view.roundsWon[otherSeat(view.seat)]}`;
+    wins.textContent = `Rounds won\nYou ${view.roundsWon[view.seat]} · ${rival} ${view.roundsWon[otherSeat(view.seat)]}`;
     showNotice("");
     status.textContent = `${title}. ${points}`;
     if (!animationTimer && announcedResultRevision !== view.revision) {
@@ -350,12 +357,12 @@ function announce(): void {
     return;
   }
   showNotice("");
-  const turn = isMyTurn() ? autoplay ? "Player AI’s turn" : "Your turn" : "Computer’s turn";
+  const turn = isMyTurn() ? autoplay ? "Player AI’s turn" : "Your turn" : `${rival}’s turn`;
   const penalty = view.event?.penalty;
   if (isQueued()) {
     status.textContent = "Playing your queue";
   } else if (penalty?.count) {
-    status.textContent = `${penalty.seat === view.seat ? autoplay ? "Player AI draws" : "You draw" : "Computer draws"} ${penalty.count}. ${turn}`;
+    status.textContent = `${penalty.seat === view.seat ? autoplay ? "Player AI draws" : "You draw" : `${rival} draws`} ${penalty.count}. ${turn}`;
   } else if (!autoplay && isMyTurn() && !view.legalLeads.length) {
     status.textContent = view.drewThisTurn ? "No playable cards. Tap either pile to pass." : "No playable cards. Drawing.";
   } else {
@@ -373,12 +380,13 @@ function updateControls(): void {
   discardPile.setAttribute("aria-label", view?.result ? "Deal the next round" :
     staged.length ? `Play ${staged.length} queued ${staged.length === 1 ? "card" : "cards"}`
       : debug && !autoplay ? "Play this turn using the AI" : drew ? "Pass your turn using the discard pile" : "Discard pile");
-  element("debug-controls").hidden = !debug;
-  element("debug-settings").hidden = !debug;
+  element("debug-controls").hidden = !debug || !!network;
+  element("debug-settings").hidden = !debug || !!network;
   element<HTMLButtonElement>("test-aggressiveness").disabled = !debug || !view || !inputReady();
   element<HTMLButtonElement>("test-aggressiveness-eight").disabled = !debug || !view || !inputReady();
   autoplayCheck.disabled = !view || !!view.matchResult || shuffleLocked();
   autoplayCheck.checked = autoplay;
+  element("opponent-name").textContent = network ? "Opponent" : "Computer";
   element("player-name").textContent = autoplay ? "Player AI" : "You";
   nextRound.textContent = view?.matchResult ? "New match" : "Next round";
   nextRound.disabled = !inputReady();
@@ -453,6 +461,7 @@ async function replayOpponent(): Promise<void> {
   const live = view;
   if (!live || !replay || !canReplay() || !worker) return;
   cancelAutomaticAction();
+  const connection = worker;
   const queue = staged.slice();
   const timing = tableTiming();
   const speed = replaySpeed(timing);
@@ -482,6 +491,7 @@ async function replayOpponent(): Promise<void> {
       await replayWait(timing.animate ? STAGE_FLIGHT / speed + 48 : 0, signal);
     }
   } finally {
+    if (worker !== connection) return;
     replayController = undefined;
     replaying = false;
     replayShield.hidden = true;
@@ -638,7 +648,7 @@ function setupDialogs(): void {
     if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); }
   });
   roundDialog.addEventListener("close", () => {
-    if (!roundDialog.open && view?.result && busy === undefined) roundDialog.showModal();
+    if (!roundDialog.open && view?.result && busy === undefined && (networkReady || !network)) roundDialog.showModal();
   });
   element("open-rules").onclick = () => {
     menu.hidePopover();
@@ -647,6 +657,19 @@ function setupDialogs(): void {
   element("open-settings").onclick = () => {
     menu.hidePopover();
     settingsDialog.showModal();
+  };
+  element("network-button").onclick = () => { menu.hidePopover(); void startNetwork(); };
+  element("cancel-network").onclick = () => startLocal();
+  element("network-offline").onclick = () => startLocal();
+  networkDialog.addEventListener("cancel", event => { event.preventDefault(); startLocal(); });
+  element("copy-network").onclick = async () => {
+    const input = element<HTMLInputElement>("network-link");
+    try { await navigator.clipboard.writeText(input.value); element("copy-network").textContent = "Copied"; }
+    catch { input.focus(); input.select(); element("network-status").textContent = "Select and copy the invitation link."; }
+  };
+  element("share-network").hidden = !navigator.share;
+  element("share-network").onclick = async () => {
+    try { await navigator.share({ title: "Crazy Eights", url: element<HTMLInputElement>("network-link").value }); } catch { /* Share can be cancelled. */ }
   };
   restartButton.onclick = () => {
     menu.hidePopover();
@@ -658,7 +681,7 @@ function setupDialogs(): void {
     send({ type: "restart" });
   };
   const testAggressiveness = (opponentCards: 1 | 8) => {
-    if (!debug || !view || !inputReady()) return;
+    if (network || !debug || !view || !inputReady()) return;
     if (autoplay) setAutoplay(false);
     staged = [];
     playCapacity = 0;
@@ -705,6 +728,7 @@ function setAutoplay(enabled: boolean): void {
 }
 
 function toggleDebug(): void {
+  if (network) return;
   if (replaying || shuffleLocked()) return;
   cancelDeckTap();
   debug = !debug;
@@ -790,20 +814,8 @@ async function start(): Promise<void> {
     else void replayOpponent();
   };
   const [images] = await Promise.all([loadCardArt(), document.fonts.load("700 14px Barlow Condensed")]);
-  worker = new LocalServer();
-  worker.postMessage(JSON.stringify({ debug }));
-  worker.postMessage(JSON.stringify({ autoplay }));
-  syncAutoplayPause();
-  sendTiming();
-  worker.onmessage = ({ data }: MessageEvent<string>) => receive(JSON.parse(data) as Response);
-  worker.onerror = () => {
-    cancelAutomaticAction();
-    stockPile.disabled = true;
-    discardPile.disabled = true;
-    const error = "The game couldn’t continue. Reload to try again.";
-    showNotice(error);
-    status.textContent = error;
-  };
+  const incomingInvitation = invitationFromHash(location.hash);
+  startLocal(false);
 
   const density = Math.min(window.devicePixelRatio || 1, 3);
   scene = new CardTable(table, element("card-targets"), stockPile, discardPile, replayButton, automaticPanel, opponentHand, {
@@ -813,7 +825,10 @@ async function start(): Promise<void> {
     stopImpactVibration: () => feedback.stopImpactVibration(),
     powerPulse: (score, intensity) => feedback.powerPulse(score, intensity),
     stopPowerSounds: () => feedback.stopPowerSounds(),
-    ready: () => send({ type: "snapshot" }),
+    ready: () => {
+      if (incomingInvitation) void startNetwork(incomingInvitation);
+      else send({ type: "snapshot" });
+    },
   }, images, density);
   new Phaser.Game({
     type: Phaser.AUTO,
@@ -823,6 +838,117 @@ async function start(): Promise<void> {
     input: { mouse: false, touch: false, keyboard: false },
     scene,
   });
+}
+
+function resetSession(): void {
+  replayController?.abort();
+  replayController = undefined;
+  replaying = false;
+  replayShield.hidden = true;
+  cancelDeckTap();
+  cancelAutomaticAction();
+  clearTimeout(animationTimer);
+  animationTimer = undefined;
+  worker?.terminate();
+  worker = undefined;
+  network = undefined;
+  networkReady = false;
+  view = undefined;
+  busy = pendingCommand = undefined;
+  staged = [];
+  playCapacity = 0;
+  autoplay = false;
+  history.reset();
+  announcedResultRevision = paintedRevision = undefined;
+  for (const dialog of document.querySelectorAll<HTMLDialogElement>("dialog[open]")) dialog.close();
+}
+
+function startLocal(snapshot = true): void {
+  ++networkGeneration;
+  resetSession();
+  history.network = false;
+  window.history.replaceState(null, "", location.pathname + location.search);
+  worker = new LocalServer();
+  bindConnection();
+  worker.postMessage(JSON.stringify({ debug }));
+  sendTiming();
+  if (snapshot) send({ type: "snapshot" });
+}
+
+async function startNetwork(invite?: Invitation): Promise<void> {
+  const generation = ++networkGeneration;
+  resetSession();
+  debug = false;
+  history.network = true;
+  element("network-invitation").hidden = true;
+  element("network-offline").hidden = true;
+  element("cancel-network").hidden = false;
+  element("copy-network").textContent = "Copy link";
+  element("network-status").textContent = invite ? "Connecting to the host…" : "Creating invitation…";
+  networkDialog.showModal();
+  const invitation = invite ?? { room: crypto.randomUUID(), password: crypto.randomUUID(), host: "" };
+  try {
+    const connection = new NetworkConnection(invite ? undefined : new LocalServer(), invitation, {
+      connected: () => {
+        if (generation !== networkGeneration) return;
+        networkReady = true;
+        networkDialog.close();
+        sendTiming();
+      },
+      disconnected: text => {
+        if (generation !== networkGeneration) return;
+        networkReady = false;
+        replayController?.abort();
+        cancelAutomaticAction();
+        busy = pendingCommand = undefined;
+        for (const dialog of document.querySelectorAll<HTMLDialogElement>("dialog[open]")) dialog.close();
+        element("network-status").textContent = text;
+        element("network-invitation").hidden = true;
+        element("cancel-network").hidden = true;
+        element("network-offline").hidden = false;
+        networkDialog.showModal();
+        updateControls();
+        scene?.setLocked(true);
+      },
+      problem: text => { if (generation === networkGeneration) element("network-status").textContent = text; },
+    });
+    network = connection;
+    worker = connection;
+    bindConnection();
+    sendTiming();
+    if (!invite) {
+      const created = await connection.getInvitation();
+      if (generation !== networkGeneration) return;
+      element<HTMLInputElement>("network-link").value = invitationUrl(location.href, created);
+      element("network-invitation").hidden = false;
+      element("network-status").textContent = "Waiting for your opponent…";
+    }
+    updateControls();
+  } catch (error) {
+    if (generation !== networkGeneration) return;
+    worker?.terminate();
+    element("network-status").textContent = "Couldn’t start the connection. Check your internet connection and try again.";
+    console.error(error);
+  }
+}
+
+function bindConnection(): void {
+  const connection = worker!;
+  connection.onmessage = ({ data }) => {
+    if (worker !== connection) return;
+    if (replaying) replayController?.abort();
+    receive(JSON.parse(data) as Response);
+  };
+  connection.onerror = () => {
+    if (worker !== connection) return;
+    cancelAutomaticAction();
+    stockPile.disabled = true;
+    discardPile.disabled = true;
+    const error = "The game couldn’t continue. Reload to try again.";
+    showNotice(error);
+    status.textContent = error;
+  };
+
 }
 
 void start().catch(error => {

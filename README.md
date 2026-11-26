@@ -53,7 +53,15 @@ The jack, queen, and king illustrations are cropped from [AustinGabriel64’s pu
 
 The client sends a serialized `{requestId, revision, command}` envelope. The worker calls `GameServer.handleJSON(seat, body)` and returns the serialized response. Each response contains the requesting seat’s hand and the public table state. The opponent’s hidden cards and the stock order stay inside the server.
 
-For a future human opponent, run `new GameServer(null)` on a JavaScript server. The hosting code will need to associate connections with seats, authorize lifecycle commands, and deliver `stateJSON(seat)` to the other player after an accepted move. Use `automaticMove` and `stepAutomatic()` to advance committed queues one turn at a time. Current local play needs no network transport.
+For network play, the host runs `new GameServer(null, undefined, false, true)` in its worker: both seats are human, with forced draws/passes and committed queues still advanced automatically. Trystero 0.27 uses public Nostr relays for signaling and WebRTC for peer-to-peer traffic, so the existing static GitHub Pages deployment needs no game backend. Only seat-specific `stateJSON(seat)` responses are sent to the guest. The host validates requests and assigns the guest seat 1; remote worker controls, debug commands, and AI controls are rejected.
+
+### Network matches
+
+Choose **New network match**, below **New Match**, and copy or share the invitation. Opening it on another device joins automatically; both dialogs close when the peer is accepted and the host deals. Invitations contain an unpredictable room ID, room password, and the host peer ID in the URL fragment. The first joining guest occupies the second seat; additional guests cannot receive match state. Sharing the link grants access to that match, so send it only to your opponent.
+
+Each device sees its own hand and settings. In network mode, Instant Replay contains only the opponent’s previous consecutive sequence, never local draws, passes, or plays. Replaying or opening menus does not pause the other device. Queued plays wait for the longer of both devices’ animation timings. Either player can advance a completed round or restart the network match; stale simultaneous requests are rejected by revision checks.
+
+Keep both pages open and the host device awake. Disconnecting or reloading ends the connection; there is no host migration or saved network match. A disconnect dialog offers a return to computer play, after which you can create a fresh network invitation. Solo play and its offline support remain available. Some restrictive NAT/firewall combinations require TURN; no TURN service or credentials are configured here. The connection dialog reports failures and suggests trying a different network. Public signaling relay availability is outside this app’s control.
 
 ## Java reference
 

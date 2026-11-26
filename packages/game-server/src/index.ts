@@ -55,9 +55,11 @@ export class GameServer {
   private readonly random: RandomIndex;
   private autoplay: boolean;
   private debug = false;
+  private readonly automaticForcedTurns: boolean;
 
-  constructor(cpuSeat: Seat | null = 1, random: RandomIndex = randomIndex, autoplay = false) {
+  constructor(cpuSeat: Seat | null = 1, random: RandomIndex = randomIndex, autoplay = false, automaticForcedTurns = cpuSeat !== null) {
     this.cpuSeat = cpuSeat;
+    this.automaticForcedTurns = automaticForcedTurns;
     this.random = random;
     this.autoplay = autoplay;
     this.deal();
@@ -83,7 +85,7 @@ export class GameServer {
     if (this.result) return null;
     if (this.queued) return "queued";
     if (this.cpuIsUp) return "computer";
-    if (this.cpuSeat === null || this.hands[this.turn].some(card => canLead(card, this.top))) return null;
+    if (!this.automaticForcedTurns || this.hands[this.turn].some(card => canLead(card, this.top))) return null;
     return this.drewThisTurn ? "pass" : "draw";
   }
 
