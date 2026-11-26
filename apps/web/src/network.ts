@@ -1,4 +1,4 @@
-import { joinRoom, type Room, type MessageAction } from "trystero";
+import { joinRoom, getRelaySockets, type Room, type MessageAction } from "trystero";
 import type { Response } from "@crazy-eights/protocol";
 import { isNetworkRequest, NETWORK_PROTOCOL, type Invitation } from "./network-protocol.ts";
 import type { TableTiming } from "./table-timing.ts";
@@ -13,6 +13,7 @@ interface Callbacks {
   connected(): void;
   disconnected(message: string): void;
   problem(message: string): void;
+  diagnostics?(message: string): void;
 }
 
 /** One host worker owns all state. Only seat-specific views cross the data channel. */
@@ -27,11 +28,21 @@ export class NetworkConnection implements GameConnection {
   private ended = false;
   private timing?: TableTiming;
   private timer: ReturnType<typeof setTimeout>;
+  private progressTimer: ReturnType<typeof setInterval>;
+  private lastProblem?: string;
+  private server: Worker | undefined;
+  private invitation: Invitation;
+  private callbacks: Callbacks;
   readonly isHost: boolean;
 
-  constructor(private server: Worker | undefined, private invitation: Invitation, private callbacks: Callbacks) {
+  constructor(server: Worker | undefined, invitation: Invitation, callbacks: Callbacks, connect: typeof joinRoom = joinRoom) {
+    this.server = server;
+    this.invitation = invitation;
+    this.callbacks = callbacks;
     this.isHost = !!server;
-    this.room = joinRoom({ appId: "jhusain/crazy-cards", password: invitation.password }, invitation.room);
+    // Bundle candidates with SDP. This also avoids exchanging an incomplete offer
+    // before the browser has gathered its LAN/public connection addresses.
+    this.room = connect({ appId: "jhusain/crazy-cards", password: invitation.password, trickleIce: false }, invitation.room);
     this.channel = this.room.makeAction<string>("match-v1");
     this.channel.onMessage((data, { peerId }) => {
       if (this.closed || this.ended || typeof data !== "string" || data.length > 100_000) return;
@@ -79,13 +90,35 @@ export class NetworkConnection implements GameConnection {
       if (peerId === this.peer) this.disconnect(this.isHost ? "Opponent disconnected." : "Host disconnected.");
     });
     this.room.onError(error => {
-      if (!this.started && !this.closed) callbacks.problem(error.code === "peer-connect-failed"
-        ? "These networks could not connect directly. Try another Wi-Fi or mobile network."
-        : "Connection service unavailable. Still trying…");
+      if (this.started || this.closed || this.ended) return;
+      console.warn("[network]", error.code, error.message);
+      this.lastProblem = error.code === "peer-connect-failed"
+        ? "The devices found each other, but could not open a direct connection (peer-connect-failed). Still retrying."
+        : error.code === "handshake-failed"
+          ? "The secure connection handshake failed (handshake-failed). Still retrying."
+          : error.code === "relay-failed"
+            ? "Could not reach the matchmaking services (relay-failed). Still retrying."
+            : `Connection setup failed (${error.code}). Still retrying.`;
+      callbacks.problem(this.lastProblem);
     });
+    void this.room.ready.catch(error => {
+      if (this.closed || this.started) return;
+      console.warn("[network] initialization failed", error);
+      this.lastProblem = "Could not initialize a secure connection. Reload both devices and create a fresh invitation.";
+      callbacks.problem(this.lastProblem);
+    });
+    this.progressTimer = setInterval(() => {
+      if (this.started || this.closed || this.ended) return;
+      const sockets = Object.values(getRelaySockets());
+      const open = sockets.filter(socket => socket.readyState === 1).length;
+      callbacks.diagnostics?.(`Matchmaking services connected: ${open}/${sockets.length}. ${this.peer ? "Finishing game handshake…" : "Waiting for the other device."}`);
+      // Admission events can arrive at slightly different times on the two devices.
+      // Retry the small application hello until the host acknowledges it.
+      if (!this.isHost && this.peer && this.room.getPeers()[this.peer]) this.transmit({ type: "hello" });
+    }, 1500);
     this.timer = setTimeout(() => {
-      if (!this.started && !this.closed) callbacks.problem("Still waiting. Keep both pages open. If connection fails, try another network.");
-    }, 25_000);
+      if (!this.started && !this.closed) callbacks.problem(this.lastProblem ?? "Still waiting for the other device. Keep both pages open; connection setup can take up to a minute.");
+    }, 45_000);
     if (server) {
       server.onmessage = ({ data }: MessageEvent<string | { remote: string }>) => {
         if (this.closed || this.ended) return;
@@ -103,6 +136,7 @@ export class NetworkConnection implements GameConnection {
   private start(): void {
     this.started = true;
     clearTimeout(this.timer);
+    clearInterval(this.progressTimer);
     this.callbacks.connected();
   }
 
@@ -116,6 +150,7 @@ export class NetworkConnection implements GameConnection {
     if (this.closed || this.ended) return;
     this.ended = true;
     clearTimeout(this.timer);
+    clearInterval(this.progressTimer);
     this.server?.postMessage({ disconnected: true });
     this.callbacks.disconnected(message + " Start a new network match to reconnect.");
   }
@@ -140,6 +175,7 @@ export class NetworkConnection implements GameConnection {
     if (!this.ended) this.transmit({ type: "leave" });
     this.closed = true;
     clearTimeout(this.timer);
+    clearInterval(this.progressTimer);
     this.server?.terminate();
     void this.room.leave().catch(() => {});
   }

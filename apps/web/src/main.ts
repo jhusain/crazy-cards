@@ -881,6 +881,7 @@ async function startNetwork(invite?: Invitation): Promise<void> {
   debug = false;
   history.network = true;
   element("network-invitation").hidden = true;
+  element("network-diagnostics").textContent = "";
   element("network-offline").hidden = true;
   element("cancel-network").hidden = false;
   element("copy-network").textContent = "Copy link";
@@ -911,6 +912,7 @@ async function startNetwork(invite?: Invitation): Promise<void> {
         scene?.setLocked(true);
       },
       problem: text => { if (generation === networkGeneration) element("network-status").textContent = text; },
+      diagnostics: text => { if (generation === networkGeneration) element("network-diagnostics").textContent = text; },
     });
     network = connection;
     worker = connection;
