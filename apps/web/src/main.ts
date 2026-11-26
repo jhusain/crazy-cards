@@ -376,6 +376,7 @@ function updateControls(): void {
   element("debug-controls").hidden = !debug;
   element("debug-settings").hidden = !debug;
   element<HTMLButtonElement>("test-aggressiveness").disabled = !debug || !view || !inputReady();
+  element<HTMLButtonElement>("test-aggressiveness-eight").disabled = !debug || !view || !inputReady();
   autoplayCheck.disabled = !view || !!view.matchResult || shuffleLocked();
   autoplayCheck.checked = autoplay;
   element("player-name").textContent = autoplay ? "Player AI" : "You";
@@ -656,14 +657,16 @@ function setupDialogs(): void {
     restartDialog.close();
     send({ type: "restart" });
   };
-  element("test-aggressiveness").onclick = () => {
+  const testAggressiveness = (opponentCards: 1 | 8) => {
     if (!debug || !view || !inputReady()) return;
     if (autoplay) setAutoplay(false);
     staged = [];
     playCapacity = 0;
     settingsDialog.close();
-    send({ type: "debug-aggressiveness" });
+    send({ type: "debug-aggressiveness", opponentCards });
   };
+  element("test-aggressiveness").onclick = () => testAggressiveness(1);
+  element("test-aggressiveness-eight").onclick = () => testAggressiveness(8);
   element("test-vibration").onclick = () => {
     if (!debug) return;
     const result = element("vibration-test-result");

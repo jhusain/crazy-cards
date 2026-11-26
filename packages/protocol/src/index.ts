@@ -22,7 +22,7 @@ export type PlayMove = { type: "play"; cards: number[]; suit?: Suit };
 export type Move = PlayMove | { type: "draw" } | { type: "pass" };
 export type Command = Move | { type: "play-queue"; cards: number[]; suit?: Suit }
   | { type: "snapshot" } | { type: "next-round" } | { type: "restart" } | { type: "auto-play" } | { type: "debug-reshuffle" }
-  | { type: "debug-aggressiveness" };
+  | { type: "debug-aggressiveness"; opponentCards?: 1 | 8 };
 
 export interface Request {
   requestId: number;

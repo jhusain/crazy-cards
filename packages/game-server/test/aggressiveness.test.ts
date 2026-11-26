@@ -188,3 +188,46 @@ test("reloading the debug example clears queued plays and previous match state",
   assert.equal(all.length, 52);
   assert.equal(new Set(all.map(card => card.id)).size, 52);
 });
+
+test("the eight-card debug test keeps the same player hand and opening, with cards left to scatter", () => {
+  const server = new GameServer(1, () => 0);
+  server.setDebug(true);
+  const original = send(server, 0, { type: "debug-aggressiveness" });
+  const eight = send(server, 0, { type: "debug-aggressiveness", opponentCards: 8 });
+  assert.deepEqual(eight.hand, original.hand);
+  assert.deepEqual(eight.lastPlay, original.lastPlay);
+  assert.equal(eight.turn, 1);
+  assert.equal(eight.opponentCount, 8);
+  assert.equal(eight.stockCount, 31);
+  const all = [...eight.hand, ...server.view(1).hand, ...eight.lastPlay,
+    ...(Reflect.get(server, "stock") as Card[])];
+  assert.equal(all.length, 52);
+  assert.equal(new Set(all.map(card => card.id)).size, 52);
+  assert(server.stepAutomatic());
+  assert.deepEqual(server.view(0).event?.cards, [card(3, "clubs")]);
+  assert.equal(server.view(0).turn, 0);
+  assert.equal(server.view(0).opponentCount, 7);
+  const jacks = ["clubs", "hearts", "spades", "diamonds"].map(suit => card(11, suit as Suit));
+  const aces = ["diamonds", "hearts", "spades", "clubs"].map(suit => card(1, suit as Suit));
+  const twos = ["clubs", "diamonds", "spades", "hearts"].map(suit => card(2, suit as Suit));
+  assert.equal(send(server, 0, { type: "play-queue", cards: [...jacks, ...aces, ...twos].map(card => card.id) }).event?.aggressiveness, 2);
+  assert(server.stepAutomatic());
+  assert.equal(server.view(0).event?.aggressiveness, 3);
+  assert(server.stepAutomatic());
+  assert.equal(server.view(0).event?.aggressiveness, 9);
+  assert.equal(server.view(0).opponentCount, 15);
+});
+
+test("eight-card setup remains debug-only and invalid hand sizes are rejected", () => {
+  const server = new GameServer(1, () => 0);
+  const request = (opponentCards: unknown) => JSON.parse(server.handleJSON(0, JSON.stringify({ requestId: 1,
+    revision: server.view(0).revision, command: { type: "debug-aggressiveness", opponentCards } }))) as Response;
+  const before = server.view(0);
+  assert.equal(request(8).type, "error");
+  assert.deepEqual(server.view(0), before);
+  server.setDebug(true);
+  for (const count of [0, 2, 7, 9, "8", null]) {
+    assert.equal(request(count).type, "error");
+    assert.deepEqual(server.view(0), before);
+  }
+});

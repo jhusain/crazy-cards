@@ -11,8 +11,10 @@ function isRequest(value: unknown): value is Request {
   const { requestId, revision, command } = value as Partial<Request>;
   if (!Number.isSafeInteger(requestId) || !Number.isSafeInteger(revision) || !command || typeof command !== "object") return false;
   switch (command.type) {
-    case "snapshot": case "draw": case "pass": case "next-round": case "restart": case "auto-play": case "debug-reshuffle": case "debug-aggressiveness":
+    case "snapshot": case "draw": case "pass": case "next-round": case "restart": case "auto-play": case "debug-reshuffle":
       return true;
+    case "debug-aggressiveness":
+      return command.opponentCards === undefined || command.opponentCards === 1 || command.opponentCards === 8;
     case "play":
     case "play-queue":
       return Array.isArray(command.cards) && command.cards.length >= 1 &&
@@ -200,7 +202,7 @@ export class GameServer {
       this.deal();
     } else if (command.type === "debug-aggressiveness") {
       if (!this.debug) throw new Error("Enable debug mode to test aggressiveness.");
-      this.testAggressiveness(seat);
+      this.testAggressiveness(seat, command.opponentCards ?? 1);
     } else if (this.queued) {
       throw new Error("Wait for the queued plays to finish.");
     } else if (command.type === "debug-reshuffle") {
@@ -223,13 +225,16 @@ export class GameServer {
     }
   }
 
-  private testAggressiveness(seat: Seat): void {
+  private testAggressiveness(seat: Seat, opponentCards: 1 | 8): void {
     const deck = standardDeck();
     const hand = deck.filter(card => card.rank === 11 || card.rank === 1 || card.rank === 2);
     const lastCard = deck.find(card => card.rank === 3 && card.suit === "clubs")!;
     const top = deck.find(card => card.rank === 3 && card.suit === "hearts")!;
     const used = new Set([...hand, lastCard, top].map(card => card.id));
-    this.hands = seat === 0 ? [hand, [lastCard]] : [[lastCard], hand];
+    // Keep 3♣ the only legal opening move so both tests begin with the same suit change.
+    const opponent = [lastCard, ...deck.filter(card => !used.has(card.id) && !canLead(card, top)).slice(0, opponentCards - 1)];
+    opponent.forEach(card => used.add(card.id));
+    this.hands = seat === 0 ? [hand, opponent] : [opponent, hand];
     this.stock = deck.filter(card => !used.has(card.id));
     this.discard = [];
     this.lastPlay = [top];
