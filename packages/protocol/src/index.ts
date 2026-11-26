@@ -41,6 +41,8 @@ export interface TurnEvent {
   kind: "play" | "draw" | "pass" | "shuffle";
   cards?: PlayedCard[];
   burnsPreviousPlay?: boolean;
+  /** Score of this actual play, calculated before cards and pickup penalties change hands. */
+  aggressiveness?: number;
   drawCount?: number;
   drawnCards?: number[];
   skips?: boolean;

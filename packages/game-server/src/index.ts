@@ -45,6 +45,9 @@ export class GameServer {
   private event: TurnEvent | null = null;
   private result: RoundEnd | null = null;
   private queued: { seat: Seat; moves: PlayMove[] } | null = null;
+  private skipAggression = 0;
+  private skipRank: number | null = null;
+  private restoreSuit: [Card["suit"] | null, Card["suit"] | null] = [null, null];
 
   private readonly cpuSeat: Seat | null;
   private readonly random: RandomIndex;
@@ -174,6 +177,9 @@ export class GameServer {
     this.event = null;
     this.result = null;
     this.queued = null;
+    this.skipAggression = 0;
+    this.skipRank = null;
+    this.restoreSuit = [null, null];
     this.round++;
     this.revision++;
   }
@@ -260,6 +266,11 @@ export class GameServer {
   }
 
   private drawCards(seat: Seat, count: number): { drawnCards: number[]; reshuffles: DeckReshuffle[] } {
+    this.restoreSuit[seat] = null;
+    if (seat === this.turn) {
+      this.skipAggression = 0;
+      this.skipRank = null;
+    }
     const drawn: number[] = [];
     const reshuffles: DeckReshuffle[] = [];
     while (drawn.length < count) {
@@ -309,6 +320,31 @@ export class GameServer {
 
     const played: PlayedCard[] = cards.map((card, index) =>
       suit && index === cards.length - 1 ? { ...card!, calledSuit: suit } : card!);
+    const opponent = otherSeat(seat);
+    const suitBefore = activeSuit(this.top);
+    const suitAfter = activeSuit(played.at(-1)!);
+    const containsSkip = played.some(skipsOpponent);
+    const twos = played.filter(card => card.rank === 2).length;
+    const queenOnTop = played.at(-1)!.rank === 12 && played.at(-1)!.suit === "spades";
+    let precedingTwos = 0;
+    if (twos) {
+      // Count the actual trailing discard cards, including earlier plays hidden by the UI.
+      const pile = [...this.discard, ...this.lastPlay];
+      for (let index = pile.length - 1; index >= 0 && pile[index]!.rank === 2; index--) precedingTwos++;
+    }
+    const aggressiveness = this.skipAggression + (queenOnTop ? 2 : 0) + twos + precedingTwos +
+      (ids.length === hand.length ? 1 : 0) + (played.length === 4 ? 1 : 0) +
+      ((twos > 0 || queenOnTop) && this.hands[opponent].length === 0 ? 1 : 0) +
+      (!containsSkip && suitBefore !== suitAfter && suitAfter === this.restoreSuit[seat] &&
+        this.hands[opponent].length > 0 ? 1 : 0);
+    // Only carry skip increments, never intrinsic points. Each same-rank run contributes once,
+    // after its first play has been scored, even when staged cards arrive as separate moves.
+    if (containsSkip && lead.rank !== this.skipRank) {
+      this.skipAggression++;
+      this.skipRank = lead.rank;
+    }
+    if (!containsSkip) this.restoreSuit[seat] = null;
+    this.restoreSuit[opponent] = suitBefore !== suitAfter ? suitBefore : null;
     const burnsPreviousPlay = played.some(card => card.special === "wild") &&
       this.lastPlay.slice(-this.lastPlaySize).some(card => card.special === "wild");
     this.hands[seat] = hand.filter(card => !ids.includes(card.id));
@@ -327,7 +363,6 @@ export class GameServer {
       if (card.special === "normal") effects = [];
       else effects.push(card);
     }
-    const opponent = otherSeat(seat);
     const skips = effects.some(skipsOpponent);
     const pickupCount = effects.filter(card => card.special === "pickup").length * DEFAULT_RULES.pickupCards;
     const penaltyCount = pickupCount || (effects.some(card => card.special === "super-pickup") ? DEFAULT_RULES.superPickupCards : 0);
@@ -336,7 +371,7 @@ export class GameServer {
     const pickup = penaltyCount ? this.drawCards(opponent, penaltyCount) : undefined;
     const drawnCards = pickup?.drawnCards;
     const penalty = drawnCards ? { seat: opponent, count: drawnCards.length } : undefined;
-    this.event = { seat, kind: "play", cards: played, skips, penalty, drawnCards,
+    this.event = { seat, kind: "play", cards: played, aggressiveness, skips, penalty, drawnCards,
       ...(burnsPreviousPlay ? { burnsPreviousPlay: true } : {}), ...(pickup?.reshuffles.length ? { reshuffles: pickup.reshuffles } : {}) };
     this.advance(next);
   }
@@ -347,6 +382,11 @@ export class GameServer {
   }
 
   private advance(next: Seat): void {
+    if (next !== this.turn) {
+      this.skipAggression = 0;
+      this.skipRank = null;
+      this.restoreSuit[this.turn] = null;
+    }
     this.turn = next;
     this.drewThisTurn = false;
     if (this.hands[next].length > 0) return;

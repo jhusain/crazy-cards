@@ -11,6 +11,7 @@ import { AutomaticActions, type AutomaticAction } from "./automatic-actions.ts";
 import { OpponentReplay } from "./opponent-replay.ts";
 import { roundProgress } from "./round-progress.ts";
 import { isDebug } from "./play-mode.ts";
+import { debugPlayMessage } from "./debug-play.ts";
 import { ANIMATION_SPEEDS, DEFAULT_SETTINGS, readSettings, type GameSettings } from "./settings.ts";
 import { CardTable } from "./table.ts";
 import { replayDelay, replaySpeed, STAGE_FLIGHT, tableAnimationTime, type TableTiming } from "./table-timing.ts";
@@ -47,13 +48,15 @@ const menuShield = element<HTMLButtonElement>("menu-shield");
 const replayShield = element<HTMLButtonElement>("replay-shield");
 const history = new OpponentReplay();
 const automaticActions = new AutomaticActions();
-const feedback = new CountdownFeedback(message => {
-  if (!debug) return;
+function showDebugToast(message: string): void {
   const toast = element("debug-toast");
   toast.textContent = message;
   toast.hidden = false;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { toast.hidden = true; }, 2200);
+}
+const feedback = new CountdownFeedback(message => {
+  if (debug) showDebugToast(message);
 });
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 const settingsKey = "crazy-eights-settings";
@@ -500,7 +503,9 @@ function receive(response: Response): void {
   }
   automaticActions.record(view, response.view, command);
   history.record(view, response.view);
+  const playMessage = debugPlayMessage(view, response.view, debug);
   view = response.view;
+  if (playMessage) showDebugToast(playMessage);
   if (view.queuedCards.length) {
     staged = view.queuedCards.flatMap(id => view!.hand.filter(card => card.id === id));
   } else if (changed && view.event?.kind !== "shuffle" && (!view.event || view.event.kind !== "draw" || view.event.seat !== view.seat || view.result)) {
@@ -691,11 +696,7 @@ function toggleDebug(): void {
 }
 
 function showDebugStatus(): void {
-  const toast = element("debug-toast");
-  toast.textContent = `Debug mode ${debug ? "on" : "off"}`;
-  toast.hidden = false;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { toast.hidden = true; }, 2200);
+  showDebugToast(`Debug mode ${debug ? "on" : "off"}`);
 }
 
 function setupDebug(): void {
