@@ -537,6 +537,8 @@ export class CardTable extends Phaser.Scene {
     const heroDepth = CARD_DEPTH.staging + PLAY_SLOTS * 2 + 52;
     const shadow = score > 0 ? this.add.graphics().setDepth(baseDepth - .5) : undefined;
     const chargeBackground = score >= 4 ? this.add.graphics().setDepth(heroDepth - 1) : undefined;
+    const ordinaryMask = this.game.canvas.style.maskImage;
+    const ordinaryReplayHidden = this.replayButton.hidden;
     const pulses = chargePulseThresholds(score);
     let nextPulse = 0;
     const fire = timing.burnStart !== null ? this.add.graphics().setDepth(CARD_DEPTH.discard + old.length - .5) : undefined;
@@ -574,6 +576,8 @@ export class CardTable extends Phaser.Scene {
       const charge = powerCharge(elapsed, timing.flight, slamDescent(score), score);
       if (chargeBackground) {
         chargeBackground.clear();
+        this.game.canvas.style.maskImage = charge.visible ? "none" : ordinaryMask;
+        this.replayButton.hidden = charge.visible || ordinaryReplayHidden;
         incoming.forEach(({ image }, index) => image.setDepth((charge.visible ? heroDepth : baseDepth) + index));
         shadow?.setDepth((charge.visible ? heroDepth : baseDepth) - .5);
         if (charge.visible) {
@@ -666,6 +670,10 @@ export class CardTable extends Phaser.Scene {
       fire?.destroy();
       shadow?.destroy();
       chargeBackground?.destroy();
+      if (chargeBackground) {
+        this.game.canvas.style.maskImage = ordinaryMask;
+        this.replayButton.hidden = ordinaryReplayHidden;
+      }
       outgoing.forEach(image => image.destroy());
       incoming.forEach(({ image }, index) => image.setDepth(CARD_DEPTH.discard + index));
       if (reflow) placeTarget(collapsedPositions[0]!, collapsedPositions.at(-1)!);
