@@ -27,23 +27,25 @@ export function opponentWildPlay(view: TableView): boolean {
 export function playDuration(view: TableView): number {
   const wild = opponentWildPlay(view);
   const burn = view.event?.burnsPreviousPlay === true;
-  return playPhases(false, false, wild, burn).total;
+  return playPhases(false, false, wild, burn, view.event?.aggressiveness).total;
 }
 
-export function playPhases(queued: boolean, restoring: boolean, wild = false, burn = false) {
+export function playPhases(queued: boolean, restoring: boolean, wild = false, burn = false, aggressiveness = 0) {
+  // Add time only before the original slide; preserve its duration and easing, including staged prefixes.
+  const impactLead = aggressiveness > 0 ? PLAY_FLIGHT + PLAY_HOLD : 0;
   const returnStart = restoring ? PLAY_FLIGHT + PLAY_HOLD : PLAY_TIME;
   const normal = {
-    flight: queued ? 0 : PLAY_FLIGHT,
-    collapseStart: queued ? 0 : PLAY_FLIGHT + (restoring ? 0 : PLAY_HOLD),
-    collapseEnd: returnStart,
-    returnStart,
-    total: PLAY_TIME,
+    flight: (queued ? 0 : PLAY_FLIGHT) + (impactLead ? PLAY_FLIGHT : 0),
+    collapseStart: (queued ? 0 : PLAY_FLIGHT + (restoring ? 0 : PLAY_HOLD)) + impactLead,
+    collapseEnd: returnStart + impactLead,
+    returnStart: returnStart + impactLead,
+    total: PLAY_TIME + impactLead,
     reelEnd: 0,
     burnStart: null as number | null,
   };
   let phases = normal;
   if (wild) {
-    const reelEnd = PLAY_TIME * 5.5;
+    const reelEnd = PLAY_TIME * 5.5 + impactLead;
     const collapseStart = reelEnd + PLAY_TIME / 5;
     const extra = collapseStart - normal.collapseStart;
     phases = { ...normal, collapseStart, collapseEnd: normal.collapseEnd + extra,

@@ -3,6 +3,7 @@ import { PLAY_SLOTS, canFollowInQueue, otherSeat, wildSuitOptions, type Card, ty
 import { CardTextures, describeCard, loadCardArt, type FaceTexture } from "./cards.ts";
 import { shuffleFrame } from "./shuffle-animation.ts";
 import { wildReel, wildReelSounds } from "./wild-reel.ts";
+import { slamFlight, impactEnvelope, scatteredCard, tableShock } from "./play-impact.ts";
 import { flickPlayableCards, isUpwardFlick, queuedCardFlick, type FlickSettings } from "./card-gesture.ts";
 import {
   ART_HEIGHT, ART_WIDTH, CARD_DEPTH, HAND_FADE_WIDTH, PILE_STEP, artHeight, planTableLayout, opponentPositions, playLandingPositions,
@@ -44,6 +45,7 @@ type Controls = {
   tapCard: (id: number) => void; flickCard: (id: number) => void;
   playQueue: () => void; clearPlay: () => void; ready: () => void; suitTick?: (sound: "tick" | "click") => void;
   fireRumble?: (durationMs: number) => void; stopFireRumble?: () => void;
+  tableSlam?: (score: number) => void;
 };
 type CardTarget = { card: Card; position: CardPosition; dimmed: boolean; staged: boolean; depth: number };
 type Arrival = { image: CardImage; position: CardPosition; id?: number };
@@ -86,6 +88,8 @@ export class CardTable extends Phaser.Scene {
   private layoutHeight = 0;
   private handEdge = Infinity;
   private handBottom = Infinity;
+  private impactCards: { image: CardImage; home: CardPosition; id?: number }[] = [];
+  private impact?: { origin: CardPosition; timing: PlayPhases; score: number };
 
   constructor(
     private readonly board: HTMLElement,
@@ -117,6 +121,7 @@ export class CardTable extends Phaser.Scene {
     window.addEventListener("resize", resize);
     this.events.once("shutdown", () => {
       this.controls.stopFireRumble?.();
+      this.board.style.removeProperty("transform");
       observer.disconnect();
       window.removeEventListener("resize", resize);
     });
@@ -144,6 +149,9 @@ export class CardTable extends Phaser.Scene {
     try {
       this.controls.stopFireRumble?.();
       this.tweens.killAll();
+      this.board.style.removeProperty("transform");
+      this.impactCards = [];
+      this.impact = undefined;
       delete this.board.dataset.wildReel;
       delete this.board.dataset.wildPhase;
       this.children.removeAll(true);
@@ -272,7 +280,7 @@ export class CardTable extends Phaser.Scene {
       const oldEnemy = motion && priorRound ? opponentPositions(original, width, priorRound.opponentCount) : undefined;
       const opponentPlayed = motion && view.event?.kind === "play" && view.event.seat !== view.seat;
       const stagedCommit = !!(reflow && view.event?.seat === view.seat && committedFromPlay(view.visibleDiscard, previous));
-      const phases = reflow ? playPhases(stagedCommit, false, opponentWildPlay(view), view.event?.burnsPreviousPlay) : undefined;
+      const phases = reflow ? playPhases(stagedCommit, false, opponentWildPlay(view), view.event?.burnsPreviousPlay, view.event?.aggressiveness) : undefined;
       const draw = drawTimeline(view, view.seat);
       const opponentDraw = drawTimeline(view, otherSeat(view.seat));
       const stockDraw = reshuffling || (reflow && draw.count + opponentDraw.count > 0)
@@ -326,6 +334,7 @@ export class CardTable extends Phaser.Scene {
       if (reflow && reflow.end > reflow.start) {
         this.tween(reflow.end - reflow.start, t => reflowFrames.forEach(frame => frame(t)), undefined, reflow.start);
       }
+      this.animateImpact();
       if (reshuffling || reflow) {
         this.deferResize = true;
         const ready = handReadinessTimeline(view);
@@ -460,6 +469,9 @@ export class CardTable extends Phaser.Scene {
     enemy.forEach((position, index) => {
       const image = this.drawImage(texture, position, CARD_DEPTH.opponent + index);
       const from = previous?.[index];
+      if (this.impact && this.state?.view.event?.seat === this.state?.view.seat && index < surviving) {
+        this.impactCards.push({ image, home: from ?? position });
+      }
       if (initialDeal) {
         this.deal(image, stock, position, OPPONENT_DEAL);
       } else if (previous && draw.count > 0 && index >= enemy.length - draw.count) {
@@ -513,7 +525,9 @@ export class CardTable extends Phaser.Scene {
     const playerPlayed = view.event!.seat === view.seat;
     const alreadyQueued = playerPlayed && committedFromPlay(last, previous);
     const outgoingTargets = prior;
-    const timing = phases ?? playPhases(alreadyQueued, false, opponentWildPlay(view), view.event!.burnsPreviousPlay);
+    const timing = phases ?? playPhases(alreadyQueued, false, opponentWildPlay(view), view.event!.burnsPreviousPlay, view.event!.aggressiveness);
+    const score = view.event!.aggressiveness ?? 0;
+    const shadow = score > 0 ? this.add.graphics().setDepth((alreadyQueued ? CARD_DEPTH.play : CARD_DEPTH.staging + PLAY_SLOTS) - .5) : undefined;
     const fire = timing.burnStart !== null ? this.add.graphics().setDepth(CARD_DEPTH.discard + old.length - .5) : undefined;
     const anchor = outgoingTargets[0]!;
     const collapsedPositions = collapsePlayPositions(anchor, last.length);
@@ -532,6 +546,12 @@ export class CardTable extends Phaser.Scene {
       const collapsed = collapsedPositions[index]!;
       return { image, from, appended: alreadyQueued ? from : landing[index]!, collapsed, target: targets[index]!, id: card.id, card, reel };
     });
+    if (score > 0) {
+      const first = incoming[0]!.appended, last = incoming.at(-1)!.appended;
+      this.impact = { score, timing, origin: {
+        x: (first.x + last.x + last.width) / 2, y: first.y + artHeight(first.width) / 2, width: first.width,
+      } };
+    }
 
     let soundedProgress = 0;
     let fireSoundStarted = false;
@@ -550,10 +570,21 @@ export class CardTable extends Phaser.Scene {
         const spread = unit(flight * 2);
         outgoing.forEach((image, index) => this.moveCard(image, prior[index]!, outgoingTargets[index]!, spread));
         incoming.forEach(({ image, from, appended, id }, index) => {
-          this.moveCard(image, from, appended, unit((flight - index * .055) / .835), id, alreadyQueued ? 0 : 18);
+          if (score > 0) {
+            const position = slamFlight(from, appended, elapsed, timing.flight, score);
+            this.placeImage(image, position);
+            this.priorCardPositions.set(id, position);
+          } else this.moveCard(image, from, appended, unit((flight - index * .055) / .835), id, alreadyQueued ? 0 : 18);
+        });
+        shadow?.clear();
+        incoming.forEach(({ appended }) => {
+          shadow?.fillStyle(0x000000, .13);
+          shadow?.fillEllipse(appended.x + appended.width / 2, appended.y + artHeight(appended.width) / 2,
+            appended.width * .95, artHeight(appended.width) * .9);
         });
         return;
       }
+      shadow?.clear();
 
       const slide = ease(unit((elapsed - timing.collapseStart) / (timing.collapseEnd - timing.collapseStart)));
       const restore = ease(unit((elapsed - timing.returnStart) / Math.max(1, timing.total - timing.returnStart)));
@@ -589,6 +620,7 @@ export class CardTable extends Phaser.Scene {
       delete this.board.dataset.wildReel;
       delete this.board.dataset.wildPhase;
       fire?.destroy();
+      shadow?.destroy();
       outgoing.forEach(image => image.destroy());
       incoming.forEach(({ image }, index) => image.setDepth(CARD_DEPTH.discard + index));
       if (reflow) placeTarget(collapsedPositions[0]!, collapsedPositions.at(-1)!);
@@ -601,6 +633,31 @@ export class CardTable extends Phaser.Scene {
     };
     returnPiles?.(t => movePile(collapsedPositions, home, t));
     reflow?.(t => movePile(home, targets, t));
+  }
+
+  private animateImpact(): void {
+    const impact = this.impact;
+    if (!impact) return;
+    const { origin, timing, score } = impact;
+    const towardPlayer = this.state!.view.event!.seat !== this.state!.view.seat;
+    let sounded = false;
+    this.tween(timing.total, progress => {
+      const elapsed = progress * timing.total;
+      if (!sounded && elapsed >= timing.flight) {
+        sounded = true;
+        this.controls.tableSlam?.(score);
+      }
+      const shake = tableShock(elapsed, timing.flight, score);
+      this.board.style.transform = `translate(${shake.x}px, ${shake.y}px)`;
+      if (score < 5) return;
+      const amount = impactEnvelope(elapsed, timing.flight, timing.collapseStart, timing.collapseEnd);
+      this.impactCards.forEach(({ image, home, id }, index) => {
+        const scattered = scatteredCard(home, origin, score, index, towardPlayer, amount);
+        this.placeImage(image, scattered.position);
+        image.setAngle(scattered.angle);
+        if (id !== undefined) this.priorCardPositions.set(id, scattered.position);
+      });
+    }, () => { this.board.style.removeProperty("transform"); }, 0, "Linear");
   }
 
   private drawWildBurn(graphics: Phaser.GameObjects.Graphics, positions: CardPosition[], progress: number): void {
@@ -670,6 +727,9 @@ export class CardTable extends Phaser.Scene {
       const initialDepth = (draw || reflow) && drawIndex === undefined && from
         ? previousDepths.get(card.id) ?? depth : depth;
       const image = this.drawImage(this.art.face(card), position, initialDepth);
+      if (this.impact && view.event?.seat !== view.seat && drawIndex === undefined) {
+        this.impactCards.push({ image, home: from ?? position, id: card.id });
+      }
       this.priorHandDepths.set(card.id, initialDepth);
       const button = buttons.get(card.id)!;
       this.priorCardPositions.set(card.id, position);

@@ -1,3 +1,5 @@
+import { impactStrength } from "./play-impact.ts";
+
 // Phone feedback is explicitly opt-in, then unlocked by a trusted tap.
 export class CountdownFeedback {
   private context?: AudioContext;
@@ -82,6 +84,41 @@ export class CountdownFeedback {
     source.connect(filter).connect(gain).connect(context.destination);
     source.onended = () => { source.disconnect(); filter.disconnect(); gain.disconnect(); };
     source.start(now);
+  }
+  tableSlam(score: number): void {
+    const strength = impactStrength(score);
+    if (!strength || !this.sound || document.hidden || this.context?.state !== "running") return;
+    const context = this.context, now = context.currentTime;
+    const duration = .24;
+    // A brief palm slap over a low, damped wooden resonance, rather than a sustained rumble.
+    const buffer = context.createBuffer(1, Math.ceil(context.sampleRate * duration), context.sampleRate);
+    const samples = buffer.getChannelData(0);
+    for (let i = 0; i < samples.length; i++) {
+      const t = i / context.sampleRate;
+      samples[i] = (Math.random() * 2 - 1) * (Math.exp(-t * 90) * .8 + Math.exp(-t * 25) * .2);
+    }
+    const slap = context.createBufferSource();
+    slap.buffer = buffer;
+    const filter = context.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.frequency.value = 2100;
+    const slapGain = context.createGain();
+    slapGain.gain.setValueAtTime(strength * .11, now);
+    slap.connect(filter).connect(slapGain).connect(context.destination);
+    const body = context.createOscillator();
+    body.type = "sine";
+    body.frequency.setValueAtTime(115, now);
+    body.frequency.exponentialRampToValueAtTime(52, now + duration);
+    const bodyGain = context.createGain();
+    bodyGain.gain.setValueAtTime(.0001, now);
+    bodyGain.gain.exponentialRampToValueAtTime(strength * .065, now + .003);
+    bodyGain.gain.exponentialRampToValueAtTime(.0001, now + duration);
+    body.connect(bodyGain).connect(context.destination);
+    slap.onended = () => { slap.disconnect(); filter.disconnect(); slapGain.disconnect(); };
+    body.onended = () => { body.disconnect(); bodyGain.disconnect(); };
+    slap.start(now);
+    body.start(now);
+    body.stop(now + duration);
   }
   fireRumble(durationMs: number): void {
     if (!this.sound || document.hidden || this.context?.state !== "running" || durationMs <= 0) return;
