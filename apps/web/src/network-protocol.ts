@@ -1,6 +1,6 @@
 import type { Request } from "@crazy-eights/protocol";
 
-export const NETWORK_PROTOCOL = "crazy-eights-1";
+export const NETWORK_PROTOCOL = "crazy-eights-2";
 const commands = new Set(["snapshot", "draw", "pass", "play", "play-queue", "next-round", "restart"]);
 
 /** The host's GameServer validates cards, turns, revisions, and command payloads. */
@@ -15,11 +15,11 @@ export interface Invitation { room: string; password: string; host: string }
 export function invitationFromHash(hash: string): Invitation | undefined {
   const params = new URLSearchParams(hash.replace(/^#/, ""));
   const room = params.get("match"), password = params.get("key"), host = params.get("host");
-  if (!room || !password || !host || room.length > 100 || password.length > 100 || host.length > 200) return;
+  if (params.get("network") !== "playroom" || !room || !password || !host || room.length > 100 || password.length > 100 || host.length > 200) return;
   return { room, password, host };
 }
 export function invitationUrl(base: string, invite: Invitation): string {
   const url = new URL(base);
-  url.hash = new URLSearchParams({ match: invite.room, key: invite.password, host: invite.host }).toString();
+  url.hash = new URLSearchParams({ network: "playroom", match: invite.room, key: invite.password, host: invite.host }).toString();
   return url.href;
 }

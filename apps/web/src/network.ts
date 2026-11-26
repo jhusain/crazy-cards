@@ -1,6 +1,7 @@
-import { joinRoom, getRelaySockets, type Room, type MessageAction } from "trystero";
 import type { Response } from "@crazy-eights/protocol";
 import { isNetworkRequest, NETWORK_PROTOCOL, type Invitation } from "./network-protocol.ts";
+import { decryptPacket, encryptPacket, networkKey } from "./network-crypto.ts";
+import type { NetworkTransport, TransportFactory } from "./playroom-transport.ts";
 import type { TableTiming } from "./table-timing.ts";
 
 export interface GameConnection {
@@ -15,142 +16,162 @@ interface Callbacks {
   problem(message: string): void;
   diagnostics?(message: string): void;
 }
+const defaultTransport: TransportFactory = async (invitation, host, events) => {
+  const { createPlayroomTransport } = await import("./playroom-transport.ts");
+  return createPlayroomTransport(invitation, host, events);
+};
 
-/** One host worker owns all state. Only seat-specific views cross the data channel. */
+/** Host authority stays in the worker. Playroom carries encrypted, seat-specific packets. */
 export class NetworkConnection implements GameConnection {
   onmessage: GameConnection["onmessage"] = null;
   onerror: GameConnection["onerror"] = null;
-  private room: Room;
-  private channel: MessageAction<string>;
+  readonly isHost: boolean;
+  private server: Worker | undefined;
+  private invitation: Invitation;
+  private callbacks: Callbacks;
+  private transport?: NetworkTransport;
+  private ready: Promise<void>;
+  private key: Promise<CryptoKey>;
+  private selfId?: string;
   private peer?: string;
+  private peers = new Set<string>();
   private started = false;
   private closed = false;
   private ended = false;
   private timing?: TableTiming;
   private timer: ReturnType<typeof setTimeout>;
-  private progressTimer: ReturnType<typeof setInterval>;
-  private lastProblem?: string;
-  private server: Worker | undefined;
-  private invitation: Invitation;
-  private callbacks: Callbacks;
-  readonly isHost: boolean;
+  private helloTimer: ReturnType<typeof setInterval>;
+  private incoming = Promise.resolve();
+  private outgoing = Promise.resolve();
+  private sequence = 0;
+  private received = new Map<string, number>();
 
-  constructor(server: Worker | undefined, invitation: Invitation, callbacks: Callbacks, connect: typeof joinRoom = joinRoom) {
+  constructor(server: Worker | undefined, invitation: Invitation, callbacks: Callbacks, connect: TransportFactory = defaultTransport) {
     this.server = server;
-    this.invitation = invitation;
+    this.invitation = { ...invitation };
     this.callbacks = callbacks;
     this.isHost = !!server;
-    // Bundle candidates with SDP. This also avoids exchanging an incomplete offer
-    // before the browser has gathered its LAN/public connection addresses.
-    this.room = connect({ appId: "jhusain/crazy-cards", password: invitation.password, trickleIce: false }, invitation.room);
-    this.channel = this.room.makeAction<string>("match-v1");
-    this.channel.onMessage((data, { peerId }) => {
-      if (this.closed || this.ended || typeof data !== "string" || data.length > 100_000) return;
-      let packet;
-      try { packet = JSON.parse(data); } catch { return; }
-      if (packet.protocol !== NETWORK_PROTOCOL) return;
-      if (this.isHost) {
-        if (packet.type === "hello") {
-          if (this.peer && this.peer !== peerId) { this.transmit({ type: "full" }, peerId); return; }
-          this.peer = peerId;
-          if (!this.started) {
-            this.start();
-            server!.postMessage({ network: true });
-          }
-          this.transmit({ type: "accepted" });
-          return;
-        }
-        if (peerId !== this.peer || !this.started) return;
-        if (packet.type === "request" && isNetworkRequest(packet.request)) {
-          server!.postMessage({ remote: JSON.stringify(packet.request) });
-        } else if (packet.type === "timing" && packet.timing && typeof packet.timing === "object") {
-          server!.postMessage({ guestTiming: packet.timing });
-        } else if (packet.type === "leave") this.disconnect("Opponent left the match.");
-      } else {
-        if (peerId !== invitation.host) return;
-        this.peer = peerId;
-        if (packet.type === "full") { this.disconnect("This invitation is already in use."); return; }
-        if (packet.type === "leave") { this.disconnect("The host left the match."); return; }
-        if (packet.type === "accepted" || packet.type === "state") {
-          if (!this.started) { this.start(); if (this.timing) this.postMessage(JSON.stringify({ timing: this.timing })); }
-        }
-        if (packet.type === "state" && typeof packet.response === "string") {
-          const response = JSON.parse(packet.response) as Response;
-          if (response.view?.seat === 1) this.onmessage?.(new MessageEvent("message", { data: packet.response }));
-        }
-      }
-    });
-    this.room.onPeerJoin(({ peerId }) => {
-      if (!this.isHost && peerId === invitation.host) {
-        this.peer = peerId;
-        this.transmit({ type: "hello" });
-      }
-    });
-    this.room.onPeerLeave(({ peerId }) => {
-      if (peerId === this.peer) this.disconnect(this.isHost ? "Opponent disconnected." : "Host disconnected.");
-    });
-    this.room.onError(error => {
-      if (this.started || this.closed || this.ended) return;
-      console.warn("[network]", error.code, error.message);
-      this.lastProblem = error.code === "peer-connect-failed"
-        ? "The devices found each other, but could not open a direct connection (peer-connect-failed). Still retrying."
-        : error.code === "handshake-failed"
-          ? "The secure connection handshake failed (handshake-failed). Still retrying."
-          : error.code === "relay-failed"
-            ? "Could not reach the matchmaking services (relay-failed). Still retrying."
-            : `Connection setup failed (${error.code}). Still retrying.`;
-      callbacks.problem(this.lastProblem);
-    });
-    void this.room.ready.catch(error => {
-      if (this.closed || this.started) return;
-      console.warn("[network] initialization failed", error);
-      this.lastProblem = "Could not initialize a secure connection. Reload both devices and create a fresh invitation.";
-      callbacks.problem(this.lastProblem);
-    });
-    this.progressTimer = setInterval(() => {
-      if (this.started || this.closed || this.ended) return;
-      const sockets = Object.values(getRelaySockets());
-      const open = sockets.filter(socket => socket.readyState === 1).length;
-      callbacks.diagnostics?.(`Matchmaking services connected: ${open}/${sockets.length}. ${this.peer ? "Finishing game handshake…" : "Waiting for the other device."}`);
-      // Admission events can arrive at slightly different times on the two devices.
-      // Retry the small application hello until the host acknowledges it.
-      if (!this.isHost && this.peer && this.room.getPeers()[this.peer]) this.transmit({ type: "hello" });
-    }, 1500);
+    this.key = networkKey(invitation.password);
     this.timer = setTimeout(() => {
-      if (!this.started && !this.closed) callbacks.problem(this.lastProblem ?? "Still waiting for the other device. Keep both pages open; connection setup can take up to a minute.");
-    }, 45_000);
+      if (!this.started && !this.closed && !this.ended) callbacks.problem(this.selfId
+        ? "Connected to Playroom. Still waiting for the other player; keep the host’s page open and use a fresh invitation."
+        : "Connecting to Playroom…");
+    }, 25_000);
+    this.helloTimer = setInterval(() => this.hello(), 1500);
     if (server) {
       server.onmessage = ({ data }: MessageEvent<string | { remote: string }>) => {
         if (this.closed || this.ended) return;
         if (typeof data === "string") this.onmessage?.(new MessageEvent("message", { data }));
         else if (data.remote) this.transmit({ type: "state", response: data.remote });
       };
-      server.onerror = event => { this.disconnect("The host’s game stopped. Start a new match."); this.onerror?.(event); };
+      server.onerror = event => { this.disconnect("The host’s game stopped."); this.onerror?.(event); };
     }
+    this.ready = Promise.resolve().then(async () => {
+      const transport = await connect(invitation, this.isHost, {
+        packet: (wire, sender) => {
+          // Preserve wire order while asynchronous decryption completes.
+          this.incoming = this.incoming.then(() => this.receive(wire, sender)).catch(() => {});
+        },
+        peerJoined: id => { this.peers.add(id); this.hello(); },
+        peerLeft: id => { this.peers.delete(id); if (id === this.peer || !this.isHost && id === this.invitation.host) this.disconnect(this.isHost ? "Opponent disconnected." : "Host disconnected."); },
+        disconnected: () => this.disconnect("Connection to Playroom ended."),
+        problem: message => { if (!this.closed && !this.ended) callbacks.problem(message); },
+      });
+      if (this.closed) { transport.close(); return; }
+      this.transport = transport;
+      const self = await transport.ready;
+      if (this.closed) return;
+      this.selfId = self.id;
+      if (this.isHost && !self.isHost) throw new Error("Could not create a new room");
+      if (!this.isHost && self.isHost) { this.disconnect("The host is no longer in this room."); return; }
+      if (this.isHost) this.invitation = { ...this.invitation, host: self.id, room: self.room };
+      callbacks.diagnostics?.("Connected to Playroom. Reliable message delivery is available.");
+      this.hello();
+    });
+    void this.ready.catch(error => {
+      if (this.closed || this.ended) return;
+      clearTimeout(this.timer); clearInterval(this.helloTimer);
+      callbacks.problem("Could not open the Playroom match. Cancel and create a fresh invitation.");
+      console.warn("[network] Playroom setup failed:", error instanceof Error ? error.message : "Unknown error");
+    });
   }
 
   async getInvitation(): Promise<Invitation> {
-    return { ...this.invitation, host: (await this.room.getSelf()).peerId };
+    await this.ready;
+    if (this.closed || this.ended || !this.selfId) throw new Error("Connection closed");
+    return { ...this.invitation };
+  }
+
+  private hello(): void {
+    if (this.isHost || !this.selfId || this.started || this.closed || this.ended || !this.peers.has(this.invitation.host)) return;
+    this.peer = this.invitation.host;
+    this.transmit({ type: "hello" });
+  }
+
+  private async receive(wire: string, sender: string): Promise<void> {
+    if (this.closed || this.ended || !this.selfId || sender === this.selfId || typeof wire !== "string") return;
+    let packet;
+    try { packet = await decryptPacket(await this.key, wire) as Record<string, unknown>; } catch { return; }
+    if (!packet || packet.protocol !== NETWORK_PROTOCOL || packet.target !== this.selfId ||
+      !Number.isSafeInteger(packet.sequence) || (packet.sequence as number) <= (this.received.get(sender) ?? 0)) return;
+    this.received.set(sender, packet.sequence as number);
+    if (this.isHost) {
+      if (packet.type === "hello") {
+        if (this.peer && this.peer !== sender) return;
+        this.peer = sender;
+        this.transmit({ type: "accepted" });
+        if (!this.started) {
+          this.start();
+          this.server!.postMessage({ network: true });
+        }
+        return;
+      }
+      if (!this.started || sender !== this.peer) return;
+      if (packet.type === "request" && isNetworkRequest(packet.request)) this.server!.postMessage({ remote: JSON.stringify(packet.request) });
+      else if (packet.type === "timing" && packet.timing && typeof packet.timing === "object") this.server!.postMessage({ guestTiming: packet.timing });
+      else if (packet.type === "leave") this.disconnect("Opponent left the match.");
+    } else {
+      if (sender !== this.invitation.host) return;
+      if (packet.type === "leave") { this.disconnect("The host left the match."); return; }
+      if (packet.type === "accepted" || packet.type === "state") {
+        if (!this.started) {
+          this.start();
+          if (this.timing) this.postMessage(JSON.stringify({ timing: this.timing }));
+        }
+      }
+      if (packet.type === "accepted") {
+        // A snapshot also recovers the opening state after any delayed admission.
+        this.transmit({ type: "request", request: { requestId: 0, revision: 0, command: { type: "snapshot" } } });
+      }
+      if (packet.type === "state" && typeof packet.response === "string") {
+        let response: Response;
+        try { response = JSON.parse(packet.response); } catch { return; }
+        if (response.view?.seat === 1) this.onmessage?.(new MessageEvent("message", { data: packet.response }));
+      }
+    }
   }
 
   private start(): void {
     this.started = true;
-    clearTimeout(this.timer);
-    clearInterval(this.progressTimer);
+    clearTimeout(this.timer); clearInterval(this.helloTimer);
     this.callbacks.connected();
   }
 
-  private transmit(packet: object, target = this.peer): void {
+  private transmit(data: object): void {
+    const target = this.peer;
     if (!target || this.closed || this.ended) return;
-    void this.channel.send(JSON.stringify({ protocol: NETWORK_PROTOCOL, ...packet }), { target })
-      .catch(() => this.disconnect("Connection lost. Start a new match."));
+    const packet = { ...data, protocol: NETWORK_PROTOCOL, target, sequence: ++this.sequence };
+    this.outgoing = this.outgoing.then(async () => {
+      if (this.closed || this.ended) return;
+      const wire = await encryptPacket(await this.key, packet);
+      await this.transport?.send(wire);
+    }).catch(() => this.disconnect("Connection lost."));
   }
 
   private disconnect(message: string): void {
     if (this.closed || this.ended) return;
     this.ended = true;
-    clearTimeout(this.timer);
-    clearInterval(this.progressTimer);
+    clearTimeout(this.timer); clearInterval(this.helloTimer);
     this.server?.postMessage({ disconnected: true });
     this.callbacks.disconnected(message + " Start a new network match to reconnect.");
   }
@@ -167,16 +188,13 @@ export class NetworkConnection implements GameConnection {
       if (this.isHost) this.server!.postMessage(data);
       else this.transmit({ type: "request", request: message });
     }
-    // Replay and menu controls are local: they must never pause the other player.
   }
 
   terminate(): void {
     if (this.closed) return;
-    if (!this.ended) this.transmit({ type: "leave" });
     this.closed = true;
-    clearTimeout(this.timer);
-    clearInterval(this.progressTimer);
+    clearTimeout(this.timer); clearInterval(this.helloTimer);
+    this.transport?.close();
     this.server?.terminate();
-    void this.room.leave().catch(() => {});
   }
 }

@@ -6,6 +6,7 @@ export default defineConfig({
   build: {
     outDir: resolve(import.meta.dirname, "../../dist"),
     emptyOutDir: true,
+    rollupOptions: { output: { inlineDynamicImports: true } },
     assetsInlineLimit: Number.POSITIVE_INFINITY,
   },
 });

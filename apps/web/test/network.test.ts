@@ -113,34 +113,3 @@ test("host worker routes request IDs to the right seat and rejects remote worker
   worker.postMessage({ remote: JSON.stringify({ requestId: 23, revision: -1, command: { type: "draw" } }) });
   assert.equal(JSON.parse((await remote as { remote: string }).remote).type, "error");
 });
-
-test("connection reports the failing stage instead of overwriting it with still waiting", async t => {
-  const { NetworkConnection } = await import("../src/network.ts");
-  const { joinRoom } = await import("trystero");
-  let config: { trickleIce?: boolean } | undefined;
-  let errorHandler: (error: { code: string; message: string }) => void = () => {};
-  const fakeRoom = {
-    ready: Promise.resolve(),
-    makeAction: () => ({ onMessage() {}, send: async () => {} }),
-    onPeerJoin() {}, onPeerLeave() {}, getPeers: () => ({}),
-    onError: (handler: typeof errorHandler) => { errorHandler = handler; },
-    getSelf: async () => ({ peerId: "host" }), leave: async () => {},
-  };
-  const connect = ((options: typeof config) => { config = options; return fakeRoom; }) as unknown as typeof joinRoom;
-  const problems: string[] = [];
-  t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
-  const connection = new NetworkConnection(undefined, { room: "test", password: "secret", host: "host" }, {
-    connected() {}, disconnected() {}, problem: message => problems.push(message),
-  }, connect);
-  t.after(() => connection.terminate());
-  assert.equal(config?.trickleIce, false);
-  connection.terminate();
-  const timed = new NetworkConnection(undefined, { room: "test2", password: "secret", host: "host" }, {
-    connected() {}, disconnected() {}, problem: message => problems.push(message),
-  }, connect);
-  t.after(() => timed.terminate());
-  errorHandler({ code: "peer-connect-failed", message: "ICE path failed" });
-  t.mock.timers.tick(46_000);
-  assert(problems.length >= 1);
-  assert(problems.every(message => message.includes("peer-connect-failed")));
-});

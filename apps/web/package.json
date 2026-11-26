@@ -8,6 +8,6 @@
     "@fontsource-variable/inter": "^5.2.0",
     "@fontsource/barlow-condensed": "^5.2.0",
     "phaser": "4.2.1",
-    "trystero": "0.27.0"
+    "playroomkit": "0.0.97"
   }
 }
