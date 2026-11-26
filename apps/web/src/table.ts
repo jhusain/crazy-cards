@@ -3,7 +3,8 @@ import { PLAY_SLOTS, canFollowInQueue, otherSeat, wildSuitOptions, type Card, ty
 import { CardTextures, describeCard, loadCardArt, type FaceTexture } from "./cards.ts";
 import { shuffleFrame } from "./shuffle-animation.ts";
 import { wildReel, wildReelSounds } from "./wild-reel.ts";
-import { arrivalProgress, slamFlight, slamPlayFlight, slamShadow, impactEnvelope, scatteredCard, tableShock } from "./play-impact.ts";
+import { arrivalProgress, slamDescent, slamFlight, slamPlayFlight, slamShadow, impactEnvelope, scatteredCard, tableShock } from "./play-impact.ts";
+import { chargePalette, chargePulseThresholds, powerCharge } from "./power-charge.ts";
 import { flickPlayableCards, isUpwardFlick, queuedCardFlick, type FlickSettings } from "./card-gesture.ts";
 import {
   ART_HEIGHT, ART_WIDTH, CARD_DEPTH, HAND_FADE_WIDTH, PILE_STEP, artHeight, planTableLayout, opponentPositions, playLandingPositions,
@@ -46,6 +47,7 @@ type Controls = {
   playQueue: () => void; clearPlay: () => void; ready: () => void; suitTick?: (sound: "tick" | "click") => void;
   fireRumble?: (durationMs: number) => void; stopFireRumble?: () => void;
   tableSlam?: (score: number, shakeMs: number) => void; stopImpactVibration?: () => void;
+  powerPulse?: (score: number, intensity: number) => void; stopPowerSounds?: () => void;
 };
 type CardTarget = { card: Card; position: CardPosition; dimmed: boolean; staged: boolean; depth: number };
 type Arrival = { image: CardImage; position: CardPosition; id?: number };
@@ -122,6 +124,7 @@ export class CardTable extends Phaser.Scene {
     this.events.once("shutdown", () => {
       this.controls.stopFireRumble?.();
       this.controls.stopImpactVibration?.();
+      this.controls.stopPowerSounds?.();
       this.board.style.removeProperty("transform");
       observer.disconnect();
       window.removeEventListener("resize", resize);
@@ -150,6 +153,7 @@ export class CardTable extends Phaser.Scene {
     try {
       this.controls.stopFireRumble?.();
       this.controls.stopImpactVibration?.();
+      this.controls.stopPowerSounds?.();
       this.tweens.killAll();
       this.board.style.removeProperty("transform");
       this.impactCards = [];
@@ -529,7 +533,12 @@ export class CardTable extends Phaser.Scene {
     const outgoingTargets = prior;
     const timing = phases ?? playPhases(alreadyQueued, false, opponentWildPlay(view), view.event!.burnsPreviousPlay, view.event!.aggressiveness);
     const score = view.event!.aggressiveness ?? 0;
-    const shadow = score > 0 ? this.add.graphics().setDepth((alreadyQueued ? CARD_DEPTH.play : CARD_DEPTH.staging + PLAY_SLOTS) - .5) : undefined;
+    const baseDepth = alreadyQueued ? CARD_DEPTH.play : CARD_DEPTH.staging + PLAY_SLOTS;
+    const heroDepth = CARD_DEPTH.staging + PLAY_SLOTS * 2 + 52;
+    const shadow = score > 0 ? this.add.graphics().setDepth(baseDepth - .5) : undefined;
+    const chargeBackground = score >= 4 ? this.add.graphics().setDepth(heroDepth - 1) : undefined;
+    const pulses = chargePulseThresholds(score);
+    let nextPulse = 0;
     const fire = timing.burnStart !== null ? this.add.graphics().setDepth(CARD_DEPTH.discard + old.length - .5) : undefined;
     const anchor = outgoingTargets[0]!;
     const collapsedPositions = collapsePlayPositions(anchor, last.length);
@@ -562,6 +571,20 @@ export class CardTable extends Phaser.Scene {
     if (incoming.some(card => card.reel)) this.board.dataset.wildReel = String(last.at(-1)!.id);
     this.tween(timing.total, progress => {
       const elapsed = progress * timing.total;
+      const charge = powerCharge(elapsed, timing.flight, slamDescent(score), score);
+      if (chargeBackground) {
+        chargeBackground.clear();
+        incoming.forEach(({ image }, index) => image.setDepth((charge.visible ? heroDepth : baseDepth) + index));
+        shadow?.setDepth((charge.visible ? heroDepth : baseDepth) - .5);
+        if (charge.visible) {
+          this.drawPowerCharge(chargeBackground, width, layout.tableHeight, charge.progress, elapsed - charge.start);
+          // At most one pulse per rendered frame; skipped frames never release a burst of sounds.
+          if (nextPulse < pulses.length && charge.progress >= pulses[nextPulse]!) {
+            while (nextPulse < pulses.length && charge.progress >= pulses[nextPulse]!) nextPulse++;
+            this.controls.powerPulse?.(score, charge.progress);
+          }
+        }
+      }
       for (const { card, reel } of incoming) if (reel) {
         const progress = unit(elapsed / timing.reelEnd);
         this.art.face(card, { reel, progress });
@@ -642,6 +665,7 @@ export class CardTable extends Phaser.Scene {
       delete this.board.dataset.wildPhase;
       fire?.destroy();
       shadow?.destroy();
+      chargeBackground?.destroy();
       outgoing.forEach(image => image.destroy());
       incoming.forEach(({ image }, index) => image.setDepth(CARD_DEPTH.discard + index));
       if (reflow) placeTarget(collapsedPositions[0]!, collapsedPositions.at(-1)!);
@@ -654,6 +678,30 @@ export class CardTable extends Phaser.Scene {
     };
     returnPiles?.(t => movePile(collapsedPositions, home, t));
     reflow?.(t => movePile(home, targets, t));
+  }
+
+  private drawPowerCharge(graphics: Phaser.GameObjects.Graphics, width: number, height: number, progress: number, elapsed: number): void {
+    const palette = chargePalette(progress);
+    graphics.fillStyle(palette.base, 1);
+    graphics.fillRect(0, 0, width, height);
+    const phase = elapsed / 175;
+    // Broad, flowing ribbons in the felt, plum, copper, gold, and cream palette.
+    for (let band = -1; band < 8; band++) {
+      graphics.fillStyle(palette.bands[(band + 1) % palette.bands.length]!, .8);
+      graphics.beginPath();
+      for (let step = 0; step <= 28; step++) {
+        const x = width * step / 28;
+        const y = band * height / 6 + Math.sin(step / 28 * Math.PI * 3 + phase + band * .9) * height * .065;
+        if (step === 0) graphics.moveTo(x, y); else graphics.lineTo(x, y);
+      }
+      for (let step = 28; step >= 0; step--) {
+        const x = width * step / 28;
+        const y = band * height / 6 + height * .19 + Math.sin(step / 28 * Math.PI * 3 + phase + band * .9) * height * .065;
+        graphics.lineTo(x, y);
+      }
+      graphics.closePath();
+      graphics.fillPath();
+    }
   }
 
   private animateImpact(): void {

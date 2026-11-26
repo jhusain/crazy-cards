@@ -1,5 +1,6 @@
 import { ART_WIDTH, CORNER_WIDTH, artHeight, type CardPosition } from "./table-layout.ts";
 import { shakeDuration } from "./table-timing.ts";
+import { powerCharge } from "./power-charge.ts";
 
 const unit = (n: number) => Math.max(0, Math.min(1, n));
 const smooth = (n: number) => { const t = unit(n); return t * t * (3 - 2 * t); };
@@ -15,9 +16,10 @@ export const arrivalProgress = (elapsed: number, flight: number) =>
 function slamMotion(elapsed: number, flight: number, score: number) {
   const strength = impactStrength(score);
   const descent = slamDescent(score);
-  const raisedAt = Math.max(1, flight - descent);
-  const approach = smooth(elapsed / raisedAt);
-  const fall = unit((elapsed - raisedAt) / descent) ** 3;
+  const charge = powerCharge(elapsed, flight, descent, score);
+  const raisedAt = Math.max(1, charge.motionFlight - descent);
+  const approach = smooth(charge.motionElapsed / raisedAt);
+  const fall = unit((charge.motionElapsed - raisedAt) / descent) ** 3;
   const lift = Math.sin(approach * Math.PI / 2) * (1 - fall);
   return { strength, approach, lift };
 }

@@ -811,6 +811,8 @@ async function start(): Promise<void> {
     fireRumble: duration => feedback.fireRumble(duration), stopFireRumble: () => feedback.stopFireRumble(),
     tableSlam: (score, shakeMs) => feedback.tableSlam(score, shakeMs),
     stopImpactVibration: () => feedback.stopImpactVibration(),
+    powerPulse: (score, intensity) => feedback.powerPulse(score, intensity),
+    stopPowerSounds: () => feedback.stopPowerSounds(),
     ready: () => send({ type: "snapshot" }),
   }, images, density);
   new Phaser.Game({

@@ -1,5 +1,6 @@
 import { otherSeat, type Seat, type TableView } from "@crazy-eights/protocol";
 import type { GameSettings } from "./settings.ts";
+import { chargeDuration } from "./power-charge.ts";
 
 export const PLAY_FLIGHT = 235;
 export const PLAY_HOLD = 105;
@@ -35,10 +36,11 @@ export function playDuration(view: TableView): number {
 
 export function playPhases(queued: boolean, restoring: boolean, wild = false, burn = false, aggressiveness = 0) {
   // Add time only before the original slide; preserve its duration and easing, including staged prefixes.
-  const impactLead = aggressiveness > 0 ? PLAY_FLIGHT + shakeDuration(aggressiveness) : 0;
+  const charge = chargeDuration(aggressiveness);
+  const impactLead = aggressiveness > 0 ? PLAY_FLIGHT + shakeDuration(aggressiveness) + charge : 0;
   const returnStart = restoring ? PLAY_FLIGHT + PLAY_HOLD : PLAY_TIME;
   const normal = {
-    flight: (queued ? 0 : PLAY_FLIGHT) + (impactLead ? PLAY_FLIGHT : 0),
+    flight: (queued ? 0 : PLAY_FLIGHT) + (impactLead ? PLAY_FLIGHT : 0) + charge,
     collapseStart: (queued ? 0 : PLAY_FLIGHT + (restoring ? 0 : PLAY_HOLD)) + impactLead,
     collapseEnd: returnStart + impactLead,
     returnStart: returnStart + impactLead,

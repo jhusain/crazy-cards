@@ -5,6 +5,7 @@ import { GameServer } from "@crazy-eights/game-server";
 import { arrivalProgress, slamFlight, slamPlayFlight, slamShadow, slamDescent, slamIntensity, impactEnvelope, impactVibration, scatteredCard, tableShock } from "../src/play-impact.ts";
 import { drawTimeline, playPhases, playReflow, tableAnimationTime, shakeDuration, HAND_DRAW, OPPONENT_DRAW, PLAY_FLIGHT, PLAY_SHAKE, PLAY_TIME } from "../src/table-timing.ts";
 import { ART_WIDTH, CORNER_WIDTH, PILE_STEP, artHeight } from "../src/table-layout.ts";
+import { chargeDuration } from "../src/power-charge.ts";
 
 const from = { x: 130, y: 560, width: 100 };
 const landing = { x: 210, y: 300, width: 90 };
@@ -36,7 +37,7 @@ test("slams lift and enlarge the group, then land exactly without changing the d
       const slam = playPhases(queued, false, wild, burn, score);
       assert(Math.abs((slam.collapseEnd - slam.collapseStart) - (normal.collapseEnd - normal.collapseStart)) < 1e-8);
       assert(Math.abs((slam.total - slam.returnStart) - (normal.total - normal.returnStart)) < 1e-8);
-      assert(Math.abs(slam.total - normal.total - PLAY_FLIGHT - shakeDuration(score)) < 1e-8);
+      assert(Math.abs(slam.total - normal.total - PLAY_FLIGHT - shakeDuration(score) - chargeDuration(score)) < 1e-8);
       assert(slam.flight > 0);
       assert(slam.collapseStart > slam.flight);
     }
@@ -58,15 +59,16 @@ test("slams lift and enlarge the group, then land exactly without changing the d
 test("higher aggression spends less time descending", () => {
   const flight = playPhases(false, false, false, false, 1).flight;
   const low = slamFlight(from, landing, flight - 50, flight, 1);
-  const high = slamFlight(from, landing, flight - 50, flight, 9);
+  const highFlight = playPhases(false, false, false, false, 9).flight;
+  const high = slamFlight(from, landing, highFlight - 50, highFlight, 9);
   // A strong slam stays fully raised until later, then falls faster.
   assert(high.width > low.width);
 });
 
 test("each aggression step raises the play higher and enlarges its apparent elevation", () => {
-  const flight = playPhases(false, false, false, false, 1).flight;
   let previous = landing;
   for (let score = 1; score <= 15; score++) {
+    const flight = playPhases(false, false, false, false, score).flight;
     const peak = slamFlight(from, landing, flight - slamDescent(score), flight, score);
     assert(peak.y < previous.y);
     assert(peak.width > previous.width);
@@ -217,7 +219,7 @@ test("input locking, pickup animations, and reflow wait for the complete slam ti
   view.event = { kind: "play", seat: view.seat, aggressiveness: 9, penalty: { seat: otherSeat(view.seat), count: 2 } };
   const slam = playReflow(view)!;
   const draw = drawTimeline(view, otherSeat(view.seat));
-  assert.equal(slam.landing, PLAY_TIME + PLAY_FLIGHT + shakeDuration(9));
+  assert.equal(slam.landing, PLAY_TIME + PLAY_FLIGHT + shakeDuration(9) + chargeDuration(9));
   assert.equal(draw.start, slam.end);
   assert(tableAnimationTime(view, 1, true) > draw.total);
   assert.equal(tableAnimationTime(view, 1, false), 0);

@@ -91,7 +91,7 @@ test("table slaps honor mute and visibility, scale linearly, and release audio n
  Object.defineProperty(globalThis, "document", { value: document, configurable: true });
  try {
   const gains: number[] = [], starts: number[] = [];
-  let disconnected = 0;
+  let disconnected = 0, stopped = 0;
   const nodes: { disconnect: () => void; onended?: () => void }[] = [];
   const parameter = () => ({
    setValueAtTime(value: number) { gains.push(value); },
@@ -104,12 +104,12 @@ test("table slaps honor mute and visibility, scale linearly, and release audio n
   const context = {
    state: "running", currentTime: 0, sampleRate: 1000, destination: {},
    createBuffer(_channels: number, count: number) { return { getChannelData: () => new Float32Array(count) }; },
-   createBufferSource() { return Object.assign(node(), { start() { starts.push(1); } }); },
-   createBiquadFilter() { return { ...node(), frequency: { value: 0 } }; },
+   createBufferSource() { return Object.assign(node(), { start() { starts.push(1); }, stop(at?: number) { if (at === undefined) stopped++; } }); },
+   createBiquadFilter() { return { ...node(), frequency: { value: 0, ...parameter() }, Q: { value: 0 } }; },
    createGain() { return { ...node(), gain: parameter() }; },
    createDynamicsCompressor() { return { ...node(), threshold: { value: 0 }, knee: { value: 0 },
     ratio: { value: 0 }, attack: { value: 0 }, release: { value: 0 } }; },
-   createOscillator() { return Object.assign(node(), { frequency: parameter(), start() { starts.push(1); }, stop() {} }); },
+   createOscillator() { return Object.assign(node(), { frequency: parameter(), start() { starts.push(1); }, stop(at?: number) { if (at === undefined) stopped++; } }); },
   };
   const feedback = new CountdownFeedback();
   Object.assign(feedback, { context });
@@ -126,7 +126,16 @@ test("table slaps honor mute and visibility, scale linearly, and release audio n
   gains.length = 0;
   feedback.tableSlam(5);
   assert.equal(starts.length, 4);
-  assert(gains.includes(15 * .11)); assert(gains.includes(15 * .065));
+  assert(gains.includes(15 * .16)); assert(gains.includes(15 * .095));
+  feedback.powerPulse(3, 1);
+  assert.equal(starts.length, 4);
+  feedback.powerPulse(5, .25);
+  feedback.powerPulse(5, .85);
+  assert.equal(starts.length, 8);
+  assert(gains.includes((.05 + .25 * .16) * 1.1));
+  assert(gains.includes((.05 + .85 * .16) * 1.1));
+  feedback.stopPowerSounds();
+  assert.equal(stopped, 6); // Explosion's two sources plus two charge pulses with two sources each.
   nodes.forEach(node => node.onended?.());
   assert.equal(disconnected, nodes.length);
  } finally {

@@ -5,6 +5,7 @@ export class CountdownFeedback {
   private context?: AudioContext;
   private fireSource?: AudioBufferSourceNode;
   private impactVibrating = false;
+  private powerSources = new Set<AudioScheduledSourceNode>();
   sound = false;
   private readonly key = "crazy-eights-feedback";
 
@@ -105,14 +106,56 @@ export class CountdownFeedback {
     this.impactVibrating = false;
     try { navigator.vibrate?.(0); } catch { /* Unsupported or denied by the browser. */ }
   }
+  stopPowerSounds(): void {
+    for (const source of this.powerSources) {
+      try { source.stop(); } catch { /* A source may have finished in this frame. */ }
+    }
+    this.powerSources.clear();
+  }
+  powerPulse(score: number, intensity: number): void {
+    if (score < 4 || !this.sound || document.hidden || this.context?.state !== "running") return;
+    const context = this.context, now = context.currentTime;
+    const level = Math.max(0, Math.min(1, intensity));
+    const duration = .085;
+    const carrier = context.createOscillator();
+    carrier.type = "sawtooth";
+    carrier.frequency.setValueAtTime(260 + level * 1050, now);
+    carrier.frequency.exponentialRampToValueAtTime(150 + level * 700, now + duration);
+    const modulation = context.createOscillator();
+    modulation.type = "sine";
+    modulation.frequency.setValueAtTime(45 + level * 150, now);
+    const modulationGain = context.createGain();
+    modulationGain.gain.setValueAtTime(90 + level * 240, now);
+    modulation.connect(modulationGain).connect(carrier.frequency);
+    const filter = context.createBiquadFilter();
+    filter.type = "bandpass";
+    filter.frequency.setValueAtTime(750 + level * 1900, now);
+    filter.frequency.exponentialRampToValueAtTime(350 + level * 800, now + duration);
+    filter.Q.value = 2.4;
+    const gain = context.createGain();
+    gain.gain.setValueAtTime(.0001, now);
+    gain.gain.exponentialRampToValueAtTime((.05 + level * .16) * (1 + (score - 4) * .1), now + .005);
+    gain.gain.exponentialRampToValueAtTime(.0001, now + duration);
+    carrier.connect(filter).connect(gain).connect(context.destination);
+    this.powerSources.add(carrier);
+    this.powerSources.add(modulation);
+    carrier.onended = () => {
+      this.powerSources.delete(carrier); this.powerSources.delete(modulation);
+      carrier.disconnect(); modulation.disconnect(); modulationGain.disconnect(); filter.disconnect(); gain.disconnect();
+    };
+    carrier.start(now); modulation.start(now);
+    carrier.stop(now + duration); modulation.stop(now + duration);
+  }
   tableSlam(score: number, shakeMs?: number): void {
     const strength = slamIntensity(score);
     if (!strength || document.hidden) return;
     const pattern = impactVibration(score, shakeMs);
     if (pattern.length) this.impactVibrating = this.requestVibration(pattern, "Impact vibration").accepted;
+    this.stopPowerSounds();
     if (!this.sound || this.context?.state !== "running") return;
     const context = this.context, now = context.currentTime;
-    const duration = .24;
+    const explosive = score >= 4;
+    const duration = explosive ? Math.max(.4, Math.min(1.6, (shakeMs ?? 500) / 1000 + .25)) : .24;
     const limiter = context.createDynamicsCompressor();
     limiter.threshold.value = -3;
     limiter.knee.value = 6;
@@ -123,32 +166,36 @@ export class CountdownFeedback {
     const output = context.createGain();
     output.gain.setValueAtTime(4, now);
     limiter.connect(output).connect(context.destination);
-    // A brief palm slap over a low, damped wooden resonance, rather than a sustained rumble.
+    // High aggression trades the short palm slap for a crack, rolling noise, and deep sub-bass.
     const buffer = context.createBuffer(1, Math.ceil(context.sampleRate * duration), context.sampleRate);
     const samples = buffer.getChannelData(0);
     for (let i = 0; i < samples.length; i++) {
       const t = i / context.sampleRate;
-      samples[i] = (Math.random() * 2 - 1) * (Math.exp(-t * 90) * .8 + Math.exp(-t * 25) * .2);
+      const envelope = explosive ? Math.exp(-t * 70) * .45 + Math.exp(-t * 4.5) * .55
+        : Math.exp(-t * 90) * .8 + Math.exp(-t * 25) * .2;
+      samples[i] = (Math.random() * 2 - 1) * envelope;
     }
     const slap = context.createBufferSource();
     slap.buffer = buffer;
     const filter = context.createBiquadFilter();
     filter.type = "lowpass";
     filter.frequency.value = 2100;
+    if (explosive) filter.frequency.exponentialRampToValueAtTime(90, now + duration);
     const slapGain = context.createGain();
-    slapGain.gain.setValueAtTime(strength * .11, now);
+    slapGain.gain.setValueAtTime(strength * (explosive ? .16 : .11), now);
     slap.connect(filter).connect(slapGain).connect(limiter);
     const body = context.createOscillator();
     body.type = "sine";
-    body.frequency.setValueAtTime(115, now);
-    body.frequency.exponentialRampToValueAtTime(52, now + duration);
+    body.frequency.setValueAtTime(explosive ? 85 : 115, now);
+    body.frequency.exponentialRampToValueAtTime(explosive ? 28 : 52, now + duration);
     const bodyGain = context.createGain();
     bodyGain.gain.setValueAtTime(.0001, now);
-    bodyGain.gain.exponentialRampToValueAtTime(strength * .065, now + .003);
+    bodyGain.gain.exponentialRampToValueAtTime(strength * (explosive ? .095 : .065), now + .003);
     bodyGain.gain.exponentialRampToValueAtTime(.0001, now + duration);
     body.connect(bodyGain).connect(limiter);
-    slap.onended = () => { slap.disconnect(); filter.disconnect(); slapGain.disconnect(); };
-    body.onended = () => { body.disconnect(); bodyGain.disconnect(); limiter.disconnect(); output.disconnect(); };
+    if (explosive) { this.powerSources.add(slap); this.powerSources.add(body); }
+    slap.onended = () => { this.powerSources.delete(slap); slap.disconnect(); filter.disconnect(); slapGain.disconnect(); };
+    body.onended = () => { this.powerSources.delete(body); body.disconnect(); bodyGain.disconnect(); limiter.disconnect(); output.disconnect(); };
     slap.start(now);
     body.start(now);
     body.stop(now + duration);
@@ -200,13 +247,13 @@ export class CountdownFeedback {
     const sync=()=>{sound.checked=this.sound;this.save();};
     const enable=()=>{this.sound=true;sync();void this.unlock().then(()=>this.tick());dialog.close();};
     sound.checked=this.sound;
-    sound.onchange=()=>{this.sound=sound.checked;if(!this.sound)this.stopFireRumble();this.save();void this.unlock();};
+    sound.onchange=()=>{this.sound=sound.checked;if(!this.sound){this.stopFireRumble();this.stopPowerSounds();}this.save();void this.unlock();};
     document.getElementById("allow-feedback")!.onclick=enable;
     document.getElementById("decline-feedback")!.onclick=()=>{sync();dialog.close();};
     document.getElementById("enable-feedback")!.onclick=()=>dialog.showModal();
     document.addEventListener("pointerup",()=>void this.unlock(),{passive:true});
     document.addEventListener("keydown",()=>void this.unlock());
-    document.addEventListener("visibilitychange", () => { if (document.hidden) { this.stopFireRumble(); this.stopImpactVibration(); } });
+    document.addEventListener("visibilitychange", () => { if (document.hidden) { this.stopFireRumble(); this.stopImpactVibration(); this.stopPowerSounds(); } });
     let saved=false;try{saved=localStorage.getItem(this.key)!==null;}catch{}
     if(!saved) dialog.showModal();
   }
