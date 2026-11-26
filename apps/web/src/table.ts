@@ -574,6 +574,9 @@ export class CardTable extends Phaser.Scene {
     this.tween(timing.total, progress => {
       const elapsed = progress * timing.total;
       const charge = powerCharge(elapsed, timing.flight, slamDescent(score), score);
+      const raised = score > 0 && elapsed < timing.flight ? slamPlayFlight(
+        incoming.map(card => card.from), incoming.map(card => card.appended),
+        elapsed, timing.flight, score, width, layout.inset + HAND_FADE_WIDTH) : undefined;
       if (chargeBackground) {
         chargeBackground.clear();
         this.game.canvas.style.maskImage = charge.visible ? "none" : ordinaryMask;
@@ -581,7 +584,12 @@ export class CardTable extends Phaser.Scene {
         incoming.forEach(({ image }, index) => image.setDepth((charge.visible ? heroDepth : baseDepth) + index));
         shadow?.setDepth((charge.visible ? heroDepth : baseDepth) - .5);
         if (charge.visible) {
-          this.drawPowerCharge(chargeBackground, width, layout.tableHeight, charge.progress, elapsed - charge.start);
+          const positions = raised!;
+          const center = {
+            x: (Math.min(...positions.map(p => p.x)) + Math.max(...positions.map(p => p.x + p.width))) / 2,
+            y: (Math.min(...positions.map(p => p.y)) + Math.max(...positions.map(p => p.y + artHeight(p.width)))) / 2,
+          };
+          this.drawPowerCharge(chargeBackground, width, layout.tableHeight, center, charge.progress, elapsed - charge.start);
           // At most one pulse per rendered frame; skipped frames never release a burst of sounds.
           if (nextPulse < pulses.length && charge.progress >= pulses[nextPulse]!) {
             while (nextPulse < pulses.length && charge.progress >= pulses[nextPulse]!) nextPulse++;
@@ -600,8 +608,6 @@ export class CardTable extends Phaser.Scene {
         const flight = ease(elapsed / timing.flight);
         const spread = unit(flight * 2);
         outgoing.forEach((image, index) => this.moveCard(image, prior[index]!, outgoingTargets[index]!, spread));
-        const raised = score > 0 ? slamPlayFlight(incoming.map(card => card.from), incoming.map(card => card.appended),
-          elapsed, timing.flight, score, width, layout.inset + HAND_FADE_WIDTH) : undefined;
         incoming.forEach(({ image, from, appended, id }, index) => {
           if (score > 0) {
             const position = raised![index]!;
@@ -688,27 +694,22 @@ export class CardTable extends Phaser.Scene {
     reflow?.(t => movePile(home, targets, t));
   }
 
-  private drawPowerCharge(graphics: Phaser.GameObjects.Graphics, width: number, height: number, progress: number, elapsed: number): void {
+  private drawPowerCharge(graphics: Phaser.GameObjects.Graphics, width: number, height: number,
+    center: { x: number; y: number }, progress: number, elapsed: number): void {
     const palette = chargePalette(progress);
     graphics.fillStyle(palette.base, 1);
     graphics.fillRect(0, 0, width, height);
-    const phase = elapsed / 175;
-    // Broad, flowing ribbons in the felt, plum, copper, gold, and cream palette.
-    for (let band = -1; band < 8; band++) {
-      graphics.fillStyle(palette.bands[(band + 1) % palette.bands.length]!, .8);
-      graphics.beginPath();
-      for (let step = 0; step <= 28; step++) {
-        const x = width * step / 28;
-        const y = band * height / 6 + Math.sin(step / 28 * Math.PI * 3 + phase + band * .9) * height * .065;
-        if (step === 0) graphics.moveTo(x, y); else graphics.lineTo(x, y);
-      }
-      for (let step = 28; step >= 0; step--) {
-        const x = width * step / 28;
-        const y = band * height / 6 + height * .19 + Math.sin(step / 28 * Math.PI * 3 + phase + band * .9) * height * .065;
-        graphics.lineTo(x, y);
-      }
-      graphics.closePath();
-      graphics.fillPath();
+    // Oversized wedges cover every corner as the green and gold sunburst rotates.
+    const radius = Math.max(...[0, width].flatMap(x => [0, height].map(y => Math.hypot(x - center.x, y - center.y)))) * 2;
+    const count = 24;
+    const rotation = elapsed * .0007;
+    for (let ray = 0; ray < count; ray++) {
+      const start = rotation + ray * Math.PI * 2 / count;
+      const end = rotation + (ray + 1) * Math.PI * 2 / count;
+      graphics.fillStyle(palette.rays[ray % palette.rays.length]!, 1);
+      graphics.fillTriangle(center.x, center.y,
+        center.x + Math.cos(start) * radius, center.y + Math.sin(start) * radius,
+        center.x + Math.cos(end) * radius, center.y + Math.sin(end) * radius);
     }
   }
 

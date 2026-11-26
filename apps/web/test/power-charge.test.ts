@@ -41,13 +41,14 @@ test("only level four and above hold the fully raised pose during the charge", (
 test("the palette brightens continuously to an entirely white background", () => {
   const initial = chargePalette(0);
   assert.equal(initial.base, 0x182b26);
+  assert.deepEqual(initial.rays, [0x182b26, 0xefc875]);
   const final = chargePalette(1);
   assert.equal(final.base, 0xffffff);
-  assert(final.bands.every(color => color === 0xffffff));
-  let previous = [initial.base, ...initial.bands];
+  assert(final.rays.every(color => color === 0xffffff));
+  let previous = [initial.base, ...initial.rays];
   for (let frame = 1; frame <= 100; frame++) {
     const palette = chargePalette(frame / 100);
-    const colors = [palette.base, ...palette.bands];
+    const colors = [palette.base, ...palette.rays];
     colors.forEach((color, index) => {
       for (const shift of [0, 8, 16]) assert(((color >> shift) & 255) >= ((previous[index]! >> shift) & 255));
     });

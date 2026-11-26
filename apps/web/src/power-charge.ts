@@ -21,7 +21,7 @@ const whiten = (color: number, amount: number) => {
 export function chargePalette(progress: number) {
   const brightness = unit(progress) ** 1.8;
   return { base: whiten(0x182b26, brightness),
-    bands: [0x35493b, 0x60405c, 0xae7958, 0xefc875, 0xfff3db].map(color => whiten(color, brightness)) };
+    rays: [0x182b26, 0xefc875].map(color => whiten(color, brightness)) };
 }
 
 export function chargePulseThresholds(score: number): number[] {
