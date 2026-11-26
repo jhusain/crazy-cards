@@ -3,7 +3,7 @@ import { PLAY_SLOTS, canFollowInQueue, otherSeat, wildSuitOptions, type Card, ty
 import { CardTextures, describeCard, loadCardArt, type FaceTexture } from "./cards.ts";
 import { shuffleFrame } from "./shuffle-animation.ts";
 import { wildReel, wildReelSounds } from "./wild-reel.ts";
-import { slamFlight, slamShadow, impactEnvelope, scatteredCard, tableShock } from "./play-impact.ts";
+import { slamFlight, slamPlayFlight, slamShadow, impactEnvelope, scatteredCard, tableShock } from "./play-impact.ts";
 import { flickPlayableCards, isUpwardFlick, queuedCardFlick, type FlickSettings } from "./card-gesture.ts";
 import {
   ART_HEIGHT, ART_WIDTH, CARD_DEPTH, HAND_FADE_WIDTH, PILE_STEP, artHeight, planTableLayout, opponentPositions, playLandingPositions,
@@ -571,16 +571,28 @@ export class CardTable extends Phaser.Scene {
         const flight = ease(elapsed / timing.flight);
         const spread = unit(flight * 2);
         outgoing.forEach((image, index) => this.moveCard(image, prior[index]!, outgoingTargets[index]!, spread));
+        const raised = score > 0 ? slamPlayFlight(incoming.map(card => card.from), incoming.map(card => card.appended),
+          elapsed, timing.flight, score, width, layout.inset + HAND_FADE_WIDTH) : undefined;
         incoming.forEach(({ image, from, appended, id }, index) => {
           if (score > 0) {
-            const position = slamFlight(from, appended, elapsed, timing.flight, score);
+            const position = raised![index]!;
             this.placeImage(image, position);
             this.priorCardPositions.set(id, position);
           } else this.moveCard(image, from, appended, unit((flight - index * .055) / .835), id, alreadyQueued ? 0 : 18);
         });
         shadow?.clear();
-        incoming.forEach(({ from, appended }) => {
+        incoming.forEach(({ from, appended }, index) => {
           const cast = slamShadow(from, appended, elapsed, timing.flight, score);
+          if (raised) {
+            const raw = slamFlight(from, appended, elapsed, timing.flight, score);
+            const fitted = raised[index]!;
+            const scale = fitted.width / raw.width;
+            cast.x = fitted.x + (cast.x - raw.x) * scale;
+            cast.y = fitted.y + (cast.y - raw.y) * scale;
+            cast.width *= scale;
+            cast.height *= scale;
+            cast.blur *= scale;
+          }
           // Feathered card silhouettes sit above the board/old cards and below the raised play.
           for (let layer = 5; layer >= 0; layer--) {
             const spread = cast.blur * layer / 5;

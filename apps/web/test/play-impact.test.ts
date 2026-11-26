@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { otherSeat } from "@crazy-eights/protocol";
 import { GameServer } from "@crazy-eights/game-server";
-import { slamFlight, slamShadow, slamDescent, slamIntensity, impactEnvelope, scatteredCard, tableShock } from "../src/play-impact.ts";
-import { drawTimeline, playPhases, playReflow, tableAnimationTime, PLAY_FLIGHT, PLAY_HOLD, PLAY_TIME } from "../src/table-timing.ts";
-import { artHeight } from "../src/table-layout.ts";
+import { slamFlight, slamPlayFlight, slamShadow, slamDescent, slamIntensity, impactEnvelope, scatteredCard, tableShock } from "../src/play-impact.ts";
+import { drawTimeline, playPhases, playReflow, tableAnimationTime, PLAY_FLIGHT, PLAY_SHAKE, PLAY_TIME } from "../src/table-timing.ts";
+import { ART_WIDTH, CORNER_WIDTH, PILE_STEP, artHeight } from "../src/table-layout.ts";
 
 const from = { x: 130, y: 560, width: 100 };
 const landing = { x: 210, y: 300, width: 90 };
@@ -16,7 +16,7 @@ test("slams lift and enlarge the group, then land exactly without changing the d
       const slam = playPhases(queued, false, wild, burn, score);
       assert(Math.abs((slam.collapseEnd - slam.collapseStart) - (normal.collapseEnd - normal.collapseStart)) < 1e-8);
       assert(Math.abs((slam.total - slam.returnStart) - (normal.total - normal.returnStart)) < 1e-8);
-      assert(Math.abs(slam.total - normal.total - PLAY_FLIGHT - PLAY_HOLD) < 1e-8);
+      assert(Math.abs(slam.total - normal.total - PLAY_FLIGHT - PLAY_SHAKE) < 1e-8);
       assert(slam.flight > 0);
       assert(slam.collapseStart > slam.flight);
     }
@@ -41,6 +41,47 @@ test("higher aggression spends less time descending", () => {
   const high = slamFlight(from, landing, flight - 50, flight, 9);
   // A strong slam stays fully raised until later, then falls faster.
   assert(high.width > low.width);
+});
+
+test("each aggression step raises the play higher and enlarges its apparent elevation", () => {
+  const flight = playPhases(false, false, false, false, 1).flight;
+  let previous = landing;
+  for (let score = 1; score <= 15; score++) {
+    const peak = slamFlight(from, landing, flight - slamDescent(score), flight, score);
+    assert(peak.y < previous.y);
+    assert(peak.width > previous.width);
+    previous = peak;
+  }
+});
+
+test("raised groups keep every identifying corner visible, allowing card bodies to clip", () => {
+  for (const boardWidth of [320, 412, 768]) for (const count of [1, 2, 4]) for (const score of [1, 4, 9, 15]) {
+    const width = Math.min(200, boardWidth / 2);
+    const positions = Array.from({ length: count }, (_, i) => ({ x: 60 + i * width * PILE_STEP, y: 170, width }));
+    const flight = playPhases(true, false, false, false, score).flight;
+    const raised = slamPlayFlight(positions, positions, flight - slamDescent(score), flight, score, boardWidth, 12);
+    raised.forEach((position, index) => {
+      assert(position.x >= 12 - 1e-8);
+      assert(position.y >= 12 - 1e-8);
+      const cornerRight = position.x + position.width * CORNER_WIDTH / ART_WIDTH;
+      assert(cornerRight <= boardWidth - 12 + 1e-8);
+      if (index + 1 < raised.length) assert(cornerRight <= raised[index + 1]!.x + 1e-8);
+    });
+    const landed = slamPlayFlight(positions, positions, flight, flight, score, boardWidth, 12);
+    landed.forEach((position, index) => {
+      assert(Math.abs(position.x - positions[index]!.x) < 1e-8);
+      assert(Math.abs(position.y - positions[index]!.y) < 1e-8);
+      assert(Math.abs(position.width - positions[index]!.width) < 1e-8);
+    });
+  }
+});
+
+test("all aggressive plays finish shaking before the discard slide starts", () => {
+  for (const queued of [false, true]) for (const wild of [false, true]) for (const burn of [false, true]) {
+    const timing = playPhases(queued, false, wild, burn, 9);
+    assert(timing.collapseStart >= timing.flight + PLAY_SHAKE);
+    assert.deepEqual(tableShock(timing.collapseStart, timing.flight, 9), { x: 0, y: 0 });
+  }
 });
 
 test("raised cards project a moving shadow onto the surface below and lose it on landing", () => {
@@ -126,7 +167,7 @@ test("input locking, pickup animations, and reflow wait for the complete slam ti
   view.event = { kind: "play", seat: view.seat, aggressiveness: 9, penalty: { seat: otherSeat(view.seat), count: 2 } };
   const slam = playReflow(view)!;
   const draw = drawTimeline(view, otherSeat(view.seat));
-  assert.equal(slam.landing, PLAY_TIME + PLAY_FLIGHT + PLAY_HOLD);
+  assert.equal(slam.landing, PLAY_TIME + PLAY_FLIGHT + PLAY_SHAKE);
   assert.equal(draw.start, slam.end);
   assert(tableAnimationTime(view, 1, true) > draw.total);
   assert.equal(tableAnimationTime(view, 1, false), 0);

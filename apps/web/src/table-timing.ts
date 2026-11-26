@@ -3,6 +3,7 @@ import type { GameSettings } from "./settings.ts";
 
 export const PLAY_FLIGHT = 235;
 export const PLAY_HOLD = 105;
+export const PLAY_SHAKE = 210;
 export const PLAY_SLIDE = 188;
 export const PLAY_TIME = PLAY_FLIGHT + PLAY_HOLD + PLAY_SLIDE;
 export const SHUFFLE_FILL = PLAY_TIME / 3;
@@ -32,7 +33,7 @@ export function playDuration(view: TableView): number {
 
 export function playPhases(queued: boolean, restoring: boolean, wild = false, burn = false, aggressiveness = 0) {
   // Add time only before the original slide; preserve its duration and easing, including staged prefixes.
-  const impactLead = aggressiveness > 0 ? PLAY_FLIGHT + PLAY_HOLD : 0;
+  const impactLead = aggressiveness > 0 ? PLAY_FLIGHT + PLAY_SHAKE : 0;
   const returnStart = restoring ? PLAY_FLIGHT + PLAY_HOLD : PLAY_TIME;
   const normal = {
     flight: (queued ? 0 : PLAY_FLIGHT) + (impactLead ? PLAY_FLIGHT : 0),

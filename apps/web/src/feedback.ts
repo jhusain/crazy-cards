@@ -96,7 +96,10 @@ export class CountdownFeedback {
     limiter.ratio.value = 8;
     limiter.attack.value = .001;
     limiter.release.value = .08;
-    limiter.connect(context.destination);
+    // Boost after peak control so the compressor does not cancel the requested volume increase.
+    const output = context.createGain();
+    output.gain.setValueAtTime(2, now);
+    limiter.connect(output).connect(context.destination);
     // A brief palm slap over a low, damped wooden resonance, rather than a sustained rumble.
     const buffer = context.createBuffer(1, Math.ceil(context.sampleRate * duration), context.sampleRate);
     const samples = buffer.getChannelData(0);
@@ -122,7 +125,7 @@ export class CountdownFeedback {
     bodyGain.gain.exponentialRampToValueAtTime(.0001, now + duration);
     body.connect(bodyGain).connect(limiter);
     slap.onended = () => { slap.disconnect(); filter.disconnect(); slapGain.disconnect(); };
-    body.onended = () => { body.disconnect(); bodyGain.disconnect(); limiter.disconnect(); };
+    body.onended = () => { body.disconnect(); bodyGain.disconnect(); limiter.disconnect(); output.disconnect(); };
     slap.start(now);
     body.start(now);
     body.stop(now + duration);

@@ -41,6 +41,7 @@ test("table slaps honor mute and visibility, scale linearly, and release audio n
   assert.equal(starts.length, 0);
   feedback.tableSlam(1);
   assert.equal(starts.length, 2);
+  assert(gains.includes(2));
   assert(gains.includes(3 * .11)); assert(gains.includes(3 * .065));
   gains.length = 0;
   feedback.tableSlam(5);
