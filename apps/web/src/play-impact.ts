@@ -9,7 +9,7 @@ export const slamIntensity = (score: number) => impactStrength(score) * 3;
 export const slamDescent = (score: number) => 115 / (1 + slamIntensity(score) * .18);
 
 // Cubic ease-out: direct movement that progressively slows to a complete stop.
-export const quietPlayProgress = (elapsed: number, flight: number) =>
+export const arrivalProgress = (elapsed: number, flight: number) =>
   1 - (1 - unit(elapsed / flight)) ** 3;
 
 function slamMotion(elapsed: number, flight: number, score: number) {

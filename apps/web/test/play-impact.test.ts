@@ -2,27 +2,28 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { otherSeat } from "@crazy-eights/protocol";
 import { GameServer } from "@crazy-eights/game-server";
-import { quietPlayProgress, slamFlight, slamPlayFlight, slamShadow, slamDescent, slamIntensity, impactEnvelope, impactVibration, scatteredCard, tableShock } from "../src/play-impact.ts";
-import { drawTimeline, playPhases, playReflow, tableAnimationTime, shakeDuration, PLAY_FLIGHT, PLAY_SHAKE, PLAY_TIME } from "../src/table-timing.ts";
+import { arrivalProgress, slamFlight, slamPlayFlight, slamShadow, slamDescent, slamIntensity, impactEnvelope, impactVibration, scatteredCard, tableShock } from "../src/play-impact.ts";
+import { drawTimeline, playPhases, playReflow, tableAnimationTime, shakeDuration, HAND_DRAW, OPPONENT_DRAW, PLAY_FLIGHT, PLAY_SHAKE, PLAY_TIME } from "../src/table-timing.ts";
 import { ART_WIDTH, CORNER_WIDTH, PILE_STEP, artHeight } from "../src/table-layout.ts";
 
 const from = { x: 130, y: 560, width: 100 };
 const landing = { x: 210, y: 300, width: 90 };
 
-test("quiet arrivals move directly with a progressively slower stop", () => {
-  const flight = playPhases(false, false).flight;
-  assert.equal(quietPlayProgress(0, flight), 0);
-  assert.equal(quietPlayProgress(flight, flight), 1);
-  assert.equal(quietPlayProgress(-10, flight), 0);
-  assert.equal(quietPlayProgress(flight + 10, flight), 1);
+test("quiet plays and draws for either hand arrive with a progressively slower stop", () => {
+ for (const flight of [playPhases(false, false).flight, HAND_DRAW, OPPONENT_DRAW]) {
+  assert.equal(arrivalProgress(0, flight), 0);
+  assert.equal(arrivalProgress(flight, flight), 1);
+  assert.equal(arrivalProgress(-10, flight), 0);
+  assert.equal(arrivalProgress(flight + 10, flight), 1);
   let previous = 0, previousStep = Infinity;
   for (let frame = 1; frame <= 100; frame++) {
-    const progress = quietPlayProgress(flight * frame / 100, flight);
+    const progress = arrivalProgress(flight * frame / 100, flight);
     const step = progress - previous;
     assert(step > 0 && step < previousStep);
     previous = progress; previousStep = step;
   }
-  assert(1 - quietPlayProgress(flight - .001, flight) < 1e-10);
+  assert(1 - arrivalProgress(flight - .001, flight) < 1e-10);
+ }
   assert.equal(playPhases(true, false, false, false, 0).flight, 0);
   assert.deepEqual(tableShock(100, 0, 0), { x: 0, y: 0 });
   assert.deepEqual(impactVibration(0), []);

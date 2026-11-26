@@ -3,7 +3,7 @@ import { PLAY_SLOTS, canFollowInQueue, otherSeat, wildSuitOptions, type Card, ty
 import { CardTextures, describeCard, loadCardArt, type FaceTexture } from "./cards.ts";
 import { shuffleFrame } from "./shuffle-animation.ts";
 import { wildReel, wildReelSounds } from "./wild-reel.ts";
-import { quietPlayProgress, slamFlight, slamPlayFlight, slamShadow, impactEnvelope, scatteredCard, tableShock } from "./play-impact.ts";
+import { arrivalProgress, slamFlight, slamPlayFlight, slamShadow, impactEnvelope, scatteredCard, tableShock } from "./play-impact.ts";
 import { flickPlayableCards, isUpwardFlick, queuedCardFlick, type FlickSettings } from "./card-gesture.ts";
 import {
   ART_HEIGHT, ART_WIDTH, CARD_DEPTH, HAND_FADE_WIDTH, PILE_STEP, artHeight, planTableLayout, opponentPositions, playLandingPositions,
@@ -580,7 +580,7 @@ export class CardTable extends Phaser.Scene {
             const position = raised![index]!;
             this.placeImage(image, position);
             this.priorCardPositions.set(id, position);
-          } else this.moveCard(image, from, appended, quietPlayProgress(elapsed, timing.flight), id);
+          } else this.moveCard(image, from, appended, arrivalProgress(elapsed, timing.flight), id);
         });
         shadow?.clear();
         if (shadow) incoming.forEach(({ from, appended }, index) => {
@@ -830,7 +830,7 @@ export class CardTable extends Phaser.Scene {
         const age = elapsed + draw.start - draw.cardStarts[index]!;
         if (age < 0) return;
         image.setVisible(true);
-        this.moveCard(image, stock, position, ease(unit((age - draw.reveal) / draw.duration)), id, 14);
+        this.moveCard(image, stock, position, arrivalProgress(age - draw.reveal, draw.duration), id, 14);
       });
     }, undefined, draw.start, "Linear");
   }
