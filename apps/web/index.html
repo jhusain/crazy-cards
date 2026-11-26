@@ -79,7 +79,7 @@
     </main>
     <dialog id="feedback-dialog">
       <h2>Sound and vibration</h2>
-      <p>Allow countdown ticks and wild-card suit chimes? When sound is off, use a short vibration instead. You can change both in Settings.</p>
+      <p>Enable countdown ticks, impact sounds, and wild-card suit chimes? Aggressive plays vibrate whether sound is on or off. Countdowns vibrate when sound is off. You can change sound in Settings.</p>
       <button id="allow-feedback">Enable</button>
       <button id="decline-feedback">Not now</button>
     </dialog>
@@ -142,11 +142,13 @@
           <label class="setting-check"><input id="group-except-wild" type="checkbox" checked> Flicks stage wild cards if there are others in the hand</label>
           <label class="setting-check"><input id="group-except-two" type="checkbox" checked> Flicks stage 2's if there are others in the hand</label>
         </fieldset>
+        <fieldset class="flick-settings">
+          <legend>Sound and vibration</legend>
+          <label class="setting-check"><input id="sound-enabled" type="checkbox"> Sound</label>
+          <button id="enable-feedback" type="button">Enable sound and vibration</button>
+        </fieldset>
         <fieldset class="flick-settings automatic-settings">
           <legend>Automatic actions</legend>
-          <label class="setting-check"><input id="sound-enabled" type="checkbox"> Sound</label>
-          <label class="setting-check"><input id="vibration-enabled" type="checkbox"> Countdown vibration when sound is off</label>
-          <button id="enable-feedback" type="button">Enable sound and vibration</button>
           <label class="setting-check"><input id="auto-pass" type="checkbox"> Autopass after drawing a card that can't be played</label>
           <label class="setting-check"><input id="auto-pickup" type="checkbox"> Auto pickup</label>
           <label class="setting-check"><input id="auto-single" type="checkbox"> Autoplay only eligible card</label>

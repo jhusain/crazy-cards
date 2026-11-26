@@ -1,12 +1,11 @@
 import { impactVibration, slamIntensity } from "./play-impact.ts";
 
-// Phone feedback is explicitly opt-in, then unlocked by a trusted tap.
+// Sound is opt-in and unlocked by a trusted tap; gameplay vibration is automatic.
 export class CountdownFeedback {
   private context?: AudioContext;
   private fireSource?: AudioBufferSourceNode;
   private impactVibrating = false;
   sound = false;
-  vibration = false;
   private readonly key = "crazy-eights-feedback";
 
   private readonly reportVibration: (message: string) => void;
@@ -16,11 +15,10 @@ export class CountdownFeedback {
     try {
       const saved = JSON.parse(localStorage.getItem(this.key) ?? "null");
       this.sound = saved?.sound === true;
-      this.vibration = saved?.vibration === true;
     } catch { /* Defaults remain silent. */ }
   }
   save(): void {
-    try { localStorage.setItem(this.key,JSON.stringify({sound:this.sound,vibration:this.vibration})); } catch { /* Session preferences still work. */ }
+    try { localStorage.setItem(this.key,JSON.stringify({sound:this.sound})); } catch { /* Session preferences still work. */ }
   }
   async unlock(): Promise<void> {
     if (!this.sound) return;
@@ -52,7 +50,7 @@ export class CountdownFeedback {
       click.connect(filter).connect(gain).connect(context.destination);
       click.onended = () => { click.disconnect(); filter.disconnect(); gain.disconnect(); };
       click.start(now);
-    } else if (this.vibration && !this.sound) this.vibrate();
+    } else if (!this.sound) this.vibrate();
   }
   private vibrate(): void {
     this.requestVibration(25, "Countdown vibration");
@@ -110,15 +108,9 @@ export class CountdownFeedback {
   tableSlam(score: number, shakeMs?: number): void {
     const strength = slamIntensity(score);
     if (!strength || document.hidden) return;
-    if (!this.sound) {
-      if (this.vibration) {
-        const pattern = impactVibration(score, shakeMs);
-        if (pattern.length) this.impactVibrating = this.requestVibration(pattern, "Impact vibration").accepted;
-      }
-      return;
-    }
-    this.stopImpactVibration();
-    if (this.context?.state !== "running") return;
+    const pattern = impactVibration(score, shakeMs);
+    if (pattern.length) this.impactVibrating = this.requestVibration(pattern, "Impact vibration").accepted;
+    if (!this.sound || this.context?.state !== "running") return;
     const context = this.context, now = context.currentTime;
     const duration = .24;
     const limiter = context.createDynamicsCompressor();
@@ -204,13 +196,11 @@ export class CountdownFeedback {
 
   setup(): void {
     const sound=document.getElementById("sound-enabled") as HTMLInputElement;
-    const vibration=document.getElementById("vibration-enabled") as HTMLInputElement;
     const dialog=document.getElementById("feedback-dialog") as HTMLDialogElement;
-    const sync=()=>{sound.checked=this.sound;vibration.checked=this.vibration;this.save();};
-    const enable=()=>{this.sound=true;this.vibration=true;sync();void this.unlock().then(()=>this.tick());dialog.close();};
-    sound.checked=this.sound;vibration.checked=this.vibration;
-    sound.onchange=()=>{this.sound=sound.checked;if(!this.sound)this.stopFireRumble();else this.stopImpactVibration();this.save();void this.unlock();};
-    vibration.onchange=()=>{this.vibration=vibration.checked;if(!this.vibration)this.stopImpactVibration();this.save();if(this.vibration&&!this.sound)this.tick();};
+    const sync=()=>{sound.checked=this.sound;this.save();};
+    const enable=()=>{this.sound=true;sync();void this.unlock().then(()=>this.tick());dialog.close();};
+    sound.checked=this.sound;
+    sound.onchange=()=>{this.sound=sound.checked;if(!this.sound)this.stopFireRumble();this.save();void this.unlock();};
     document.getElementById("allow-feedback")!.onclick=enable;
     document.getElementById("decline-feedback")!.onclick=()=>{sync();dialog.close();};
     document.getElementById("enable-feedback")!.onclick=()=>dialog.showModal();

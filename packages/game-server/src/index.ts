@@ -363,7 +363,7 @@ export class GameServer {
       const pile = [...this.discard, ...this.lastPlay];
       for (let index = pile.length - 1; index >= 0 && pile[index]!.rank === 2; index--) precedingTwos++;
     }
-    const aggressiveness = this.skipAggression + (containsSkip ? 1 : 0) + (queenOnTop ? 2 : 0) + twos + precedingTwos +
+    const aggressiveness = this.skipAggression + (containsSkip ? 1 : 0) + (queenOnTop ? 4 : 0) + twos + precedingTwos +
       (ids.length === hand.length ? 1 : 0) + (played.length === 4 ? 1 : 0) +
       ((twos > 0 || queenOnTop) && this.hands[opponent].length === 0 ? 1 : 0) +
       (!containsSkip && suitBefore !== suitAfter && suitAfter === this.restoreSuit[seat] &&

@@ -6,7 +6,34 @@ test("countdown feedback changes beat only once per elapsed second",()=>{
  assert.deepEqual([0,16,999,1000,1016,1999,2000].map(countdownBeat),[0,0,0,1,1,1,2]);
 });
 
-test("muted impacts vibrate in sync, honor the vibration setting, and cancel cleanly", () => {
+test("the removed saved vibration preference cannot disable automatic feedback", () => {
+ const saved = ["document", "navigator", "localStorage"].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
+ const calls: (number | number[])[] = [];
+ let written = "";
+ Object.defineProperty(globalThis, "document", { configurable: true, value: { hidden: false } });
+ Object.defineProperty(globalThis, "navigator", { configurable: true,
+  value: { vibrate(pattern: number | number[]) { calls.push(pattern); return true; } } });
+ Object.defineProperty(globalThis, "localStorage", { configurable: true, value: {
+  getItem: () => JSON.stringify({ sound: false, vibration: false }),
+  setItem: (_key: string, value: string) => { written = value; },
+ } });
+ try {
+  const feedback = new CountdownFeedback();
+  feedback.tick();
+  feedback.sound = true;
+  feedback.tableSlam(4, 400);
+  assert.deepEqual(calls, [25, impactVibration(4, 400)]);
+  feedback.save();
+  assert.deepEqual(JSON.parse(written), { sound: true });
+ } finally {
+  for (const [key, descriptor] of saved) {
+   if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+   else Reflect.deleteProperty(globalThis, key);
+  }
+ }
+});
+
+test("impacts vibrate with sound on or off, muted countdowns vibrate, and cancellation is clean", () => {
  const savedDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
  const savedNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
  const document = { hidden: false };
@@ -17,13 +44,14 @@ test("muted impacts vibrate in sync, honor the vibration setting, and cancel cle
  try {
   const feedback = new CountdownFeedback();
   feedback.tableSlam(9, 600);
-  assert.equal(calls.length, 0);
+  assert.deepEqual(calls, [impactVibration(9, 600)]);
+  feedback.stopImpactVibration();
+  calls.length = 0;
   const testResult = feedback.testVibration();
   assert.deepEqual(calls, [600]);
   assert.match(testResult, /physical vibration is not confirmed/);
-  assert.equal(feedback.vibration, false); // The explicit test does not change saved preferences.
+  assert.equal(feedback.sound, false); // The explicit test does not change saved preferences.
   calls.length = 0;
-  feedback.vibration = true;
   feedback.tick();
   assert.deepEqual(calls, [25]);
   calls.length = 0;
@@ -31,16 +59,19 @@ test("muted impacts vibrate in sync, honor the vibration setting, and cancel cle
   assert.deepEqual(calls, [impactVibration(9, 600)]);
   feedback.stopImpactVibration();
   assert.equal(calls.at(-1), 0);
-  const count = calls.length;
   feedback.stopImpactVibration();
   feedback.sound = true;
   feedback.tableSlam(9, 600);
+  assert.deepEqual(calls.at(-1), impactVibration(9, 600));
+  const withSound = calls.length;
+  feedback.tick();
+  assert.equal(calls.length, withSound);
   feedback.sound = false;
   document.hidden = true;
   feedback.tableSlam(9, 600);
   document.hidden = false;
   feedback.tableSlam(0, 600);
-  assert.equal(calls.length, count);
+  assert.equal(calls.length, withSound);
   navigator.vibrate = () => false;
   assert.match(feedback.testVibration(), /rejected/);
   Reflect.deleteProperty(navigator, "vibrate");

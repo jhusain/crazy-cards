@@ -34,11 +34,11 @@ test("ordinary plays score zero; going out adds one for either seat", () => {
   }
 });
 
-test("only a queen of spades on top contributes its two intrinsic points", () => {
+test("only a queen of spades on top contributes its four intrinsic points", () => {
   const queen = card(12, "spades"), other = card(12, "clubs"), extra = card(5, "hearts");
-  assert.equal(play(position([queen, other, extra], [extra], other), [other, queen]), 2);
+  assert.equal(play(position([queen, other, extra], [extra], other), [other, queen]), 4);
   assert.equal(play(position([queen, other, extra], [extra], other), [queen, other]), 0);
-  assert.equal(play(position([queen, extra], [], card(3, "spades")), [queen]), 3);
+  assert.equal(play(position([queen, extra], [], card(3, "spades")), [queen]), 5);
 });
 
 test("twos count actual trailing discards, even beyond the visible last play", () => {
