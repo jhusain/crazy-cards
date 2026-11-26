@@ -37,7 +37,8 @@ test("slams lift and enlarge the group, then land exactly without changing the d
       const slam = playPhases(queued, false, wild, burn, score);
       assert(Math.abs((slam.collapseEnd - slam.collapseStart) - (normal.collapseEnd - normal.collapseStart)) < 1e-8);
       assert(Math.abs((slam.total - slam.returnStart) - (normal.total - normal.returnStart)) < 1e-8);
-      assert(Math.abs(slam.total - normal.total - PLAY_FLIGHT - shakeDuration(score) - chargeDuration(score)) < 1e-8);
+      if (!wild) assert(Math.abs(slam.total - normal.total - PLAY_FLIGHT - shakeDuration(score) - chargeDuration(score)) < 1e-8);
+      else assert(slam.flight >= slam.reelEnd + slamDescent(score) + chargeDuration(score) - 1e-8);
       assert(slam.flight > 0);
       assert(slam.collapseStart > slam.flight);
     }

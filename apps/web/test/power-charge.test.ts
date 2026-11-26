@@ -84,3 +84,23 @@ test("charge time delays pickups and hand reflow without changing the discard sl
   assert.equal(playReflow(view)!.landing, playPhases(false, false, false, false, 4).total);
   assert.equal(drawTimeline(view, 1).start, playReflow(view)!.end);
 });
+
+
+test("aggressive wild plays hold at full lift through the suit reveal before charging and slamming", () => {
+  const from = { x: 30, y: 600, width: 150 }, to = { x: 180, y: 250, width: 120 };
+  for (const queued of [false, true]) for (const score of [1, 3, 4, 9]) {
+    const timing = playPhases(queued, false, true, false, score);
+    const riseEnd = timing.flight - timing.wildHold - chargeDuration(score) - slamDescent(score);
+    const pose = slamFlight(from, to, riseEnd, timing.flight, score, timing.wildHold);
+    assert(pose.y < to.y && pose.width > to.width);
+    for (const elapsed of [riseEnd, (riseEnd + timing.reelEnd) / 2, timing.reelEnd]) {
+      const held = slamFlight(from, to, elapsed, timing.flight, score, timing.wildHold);
+      for (const key of ["x", "y", "width"] as const) assert(Math.abs(held[key] - pose[key]) < 1e-8);
+      assert.equal(powerCharge(elapsed, timing.flight, slamDescent(score), score, timing.wildHold).progress, 0);
+    }
+    const landed = slamFlight(from, to, timing.flight, timing.flight, score, timing.wildHold);
+    for (const key of ["x", "y", "width"] as const) assert(Math.abs(landed[key] - to[key]) < 1e-8);
+    assert(timing.collapseStart >= timing.flight + (210 + (score - 1) * 75));
+    assert.equal(timing.burnStart, null);
+  }
+});

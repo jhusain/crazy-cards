@@ -1,6 +1,6 @@
 import { otherSeat, type Seat, type TableView } from "@crazy-eights/protocol";
 import type { GameSettings } from "./settings.ts";
-import { chargeDuration } from "./power-charge.ts";
+import { chargeDuration, slamDescent } from "./power-charge.ts";
 
 export const PLAY_FLIGHT = 235;
 export const PLAY_HOLD = 105;
@@ -46,14 +46,18 @@ export function playPhases(queued: boolean, restoring: boolean, wild = false, bu
     returnStart: returnStart + impactLead,
     total: PLAY_TIME + impactLead,
     reelEnd: 0,
+    wildHold: 0,
     burnStart: null as number | null,
   };
   let phases = normal;
   if (wild) {
     const reelEnd = PLAY_TIME * 5.5 + impactLead;
-    const collapseStart = reelEnd + PLAY_TIME / 5;
+    // Hold at full lift until the suit settles, then charge (if applicable) and slam.
+    const wildHold = aggressiveness > 0
+      ? Math.max(0, reelEnd - (normal.flight - charge - slamDescent(aggressiveness))) : 0;
+    const collapseStart = Math.max(reelEnd + PLAY_TIME / 5, normal.collapseStart + wildHold);
     const extra = collapseStart - normal.collapseStart;
-    phases = { ...normal, collapseStart, collapseEnd: normal.collapseEnd + extra,
+    phases = { ...normal, flight: normal.flight + wildHold, wildHold, collapseStart, collapseEnd: normal.collapseEnd + extra,
       returnStart: normal.returnStart + extra, total: normal.total + extra, reelEnd };
   }
   if (burn) {

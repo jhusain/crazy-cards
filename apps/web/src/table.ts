@@ -574,10 +574,10 @@ export class CardTable extends Phaser.Scene {
     if (incoming.some(card => card.reel)) this.board.dataset.wildReel = String(last.at(-1)!.id);
     this.tween(timing.total, progress => {
       const elapsed = progress * timing.total;
-      const charge = powerCharge(elapsed, timing.flight, slamDescent(score), score);
+      const charge = powerCharge(elapsed, timing.flight, slamDescent(score), score, timing.wildHold);
       const raised = score > 0 && elapsed < timing.flight ? slamPlayFlight(
         incoming.map(card => card.from), incoming.map(card => card.appended),
-        elapsed, timing.flight, score, width, layout.inset + HAND_FADE_WIDTH) : undefined;
+        elapsed, timing.flight, score, width, layout.inset + HAND_FADE_WIDTH, timing.wildHold) : undefined;
       if (chargeBackground) {
         chargeBackground.clear();
         this.game.canvas.style.maskImage = charge.visible ? "none" : ordinaryMask;
@@ -619,9 +619,9 @@ export class CardTable extends Phaser.Scene {
         });
         shadow?.clear();
         if (shadow) incoming.forEach(({ from, appended }, index) => {
-          const cast = slamShadow(from, appended, elapsed, timing.flight, score);
+          const cast = slamShadow(from, appended, elapsed, timing.flight, score, timing.wildHold);
           if (raised) {
-            const raw = slamFlight(from, appended, elapsed, timing.flight, score);
+            const raw = slamFlight(from, appended, elapsed, timing.flight, score, timing.wildHold);
             const fitted = raised[index]!;
             const scale = fitted.width / raw.width;
             cast.x = fitted.x + (cast.x - raw.x) * scale;

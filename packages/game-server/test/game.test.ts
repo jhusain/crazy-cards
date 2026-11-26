@@ -632,3 +632,34 @@ test("consecutive wild plays announce a burn to both players, including multiple
   assert.equal(fourth.type, "state");
   assert.equal(fourth.view.event?.burnsPreviousPlay, undefined);
 });
+
+
+test("wild-on-wild does not burn the same player's previous wild after a draw and pass", () => {
+  for (const seat of [0, 1] as const) {
+    const server = new GameServer(null);
+    const opponent = otherSeat(seat);
+    const hands = [[card(8, "hearts"), card(8, "spades"), card(6, "clubs")], [card(7, "diamonds")]];
+    Object.assign(server, { hands: seat === 0 ? hands : hands.slice().reverse(), turn: seat,
+      lastPlay: [card(3, "hearts")], lastPlaySize: 1, stock: [card(4, "clubs")] });
+    assert.equal(command(server, seat, { type: "play", cards: [card(8, "hearts").id], suit: "diamonds" }).type, "state");
+    assert.equal(command(server, opponent, { type: "draw" }).type, "state");
+    assert.equal(command(server, opponent, { type: "pass" }).type, "state");
+    const next = command(server, seat, { type: "play", cards: [card(8, "spades").id], suit: "hearts" });
+    assert.equal(next.type, "state");
+    assert.equal(next.view.event?.burnsPreviousPlay, undefined);
+  }
+});
+
+test("wild-on-wild does not burn when the previous wild emptied the other hand", () => {
+  for (const seat of [0, 1] as const) for (const tie of [false, true]) {
+    const server = new GameServer(null);
+    const hands = [[card(8, "hearts")], [card(8, "spades"), ...(tie ? [] : [card(6, "clubs")])]];
+    Object.assign(server, { hands: seat === 0 ? hands : hands.slice().reverse(), turn: seat,
+      lastPlay: [card(3, "hearts")], lastPlaySize: 1 });
+    assert.equal(command(server, seat, { type: "play", cards: [card(8, "hearts").id], suit: "diamonds" }).type, "state");
+    const next = command(server, otherSeat(seat), { type: "play", cards: [card(8, "spades").id], suit: "hearts" });
+    assert.equal(next.type, "state");
+    assert.equal(next.view.event?.burnsPreviousPlay, undefined);
+    assert.equal(next.view.result?.winner, tie ? "tie" : seat);
+  }
+});

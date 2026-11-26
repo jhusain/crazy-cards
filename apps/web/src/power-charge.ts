@@ -2,14 +2,17 @@ const unit = (value: number) => Math.max(0, Math.min(1, value));
 
 export const chargeDuration = (score: number) => score >= 4 ? 650 + (score - 4) * 65 : 0;
 
-export function powerCharge(elapsed: number, flight: number, descent: number, score: number) {
+export const slamDescent = (score: number) => 115 / (1 + (Number.isFinite(score) ? Math.max(0, score) : 0) * 3 * .18);
+
+export function powerCharge(elapsed: number, flight: number, descent: number, score: number, hold = 0) {
   const duration = chargeDuration(score);
   const start = flight - descent - duration;
   const progress = duration ? unit((elapsed - start) / duration) : 0;
+  const waited = hold > 0 ? unit((elapsed - (start - hold)) / hold) * hold : 0;
   return { start, duration, progress,
     visible: duration > 0 && elapsed >= start && elapsed < flight,
-    motionElapsed: elapsed - progress * duration,
-    motionFlight: flight - duration,
+    motionElapsed: elapsed - waited - progress * duration,
+    motionFlight: flight - duration - hold,
   };
 }
 

@@ -32,6 +32,7 @@ export class GameServer {
   private discard: Card[] = [];
   private lastPlay: PlayedCard[] = [];
   private lastPlaySize = 1;
+  private lastPlaySeat: Seat | null = null;
   private points: [number, number] = [0, 0];
   private roundsWon: [number, number] = [0, 0];
   private roundStartingPpc = 1;
@@ -171,6 +172,7 @@ export class GameServer {
     this.discard = [];
     this.lastPlay = [opening];
     this.lastPlaySize = 1;
+    this.lastPlaySeat = null;
     this.first = this.nextFirst ?? (this.random(2) as Seat);
     this.turn = this.first;
     this.drewThisTurn = false;
@@ -237,6 +239,7 @@ export class GameServer {
     this.discard = [];
     this.lastPlay = [top];
     this.lastPlaySize = 1;
+    this.lastPlaySeat = null;
     this.points = [0, 0];
     this.roundsWon = [0, 0];
     this.roundStartingPpc = this.pointsPerCard = 1;
@@ -371,10 +374,12 @@ export class GameServer {
       this.skipAggression++;
       this.skipRank = lead.rank;
     }
-    const burnsPreviousPlay = played.some(card => card.special === "wild") &&
+    const burnsPreviousPlay = this.lastPlaySeat === opponent && this.hands[opponent].length > 0 &&
+      played.some(card => card.special === "wild") &&
       this.lastPlay.slice(-this.lastPlaySize).some(card => card.special === "wild");
     this.hands[seat] = hand.filter(card => !ids.includes(card.id));
     this.lastPlaySize = played.length;
+    this.lastPlaySeat = seat;
     this.passesWithoutProgress = 0;
     if (lead.special === "pickup" && this.top.special === "pickup") {
       this.lastPlay = [...this.lastPlay, ...played];

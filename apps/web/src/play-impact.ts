@@ -1,22 +1,22 @@
 import { ART_WIDTH, CORNER_WIDTH, artHeight, type CardPosition } from "./table-layout.ts";
 import { shakeDuration } from "./table-timing.ts";
-import { powerCharge } from "./power-charge.ts";
+import { powerCharge, slamDescent } from "./power-charge.ts";
+export { slamDescent } from "./power-charge.ts";
 
 const unit = (n: number) => Math.max(0, Math.min(1, n));
 const smooth = (n: number) => { const t = unit(n); return t * t * (3 - 2 * t); };
 export const impactStrength = (score: number) => Number.isFinite(score) ? Math.max(0, score) : 0;
 // Intensity scales the impact, independently of lift geometry and the scattering threshold.
 export const slamIntensity = (score: number) => impactStrength(score) * 3;
-export const slamDescent = (score: number) => 115 / (1 + slamIntensity(score) * .18);
 
 // Cubic ease-out: direct movement that progressively slows to a complete stop.
 export const arrivalProgress = (elapsed: number, flight: number) =>
   1 - (1 - unit(elapsed / flight)) ** 3;
 
-function slamMotion(elapsed: number, flight: number, score: number) {
+function slamMotion(elapsed: number, flight: number, score: number, hold = 0) {
   const strength = impactStrength(score);
   const descent = slamDescent(score);
-  const charge = powerCharge(elapsed, flight, descent, score);
+  const charge = powerCharge(elapsed, flight, descent, score, hold);
   const raisedAt = Math.max(1, charge.motionFlight - descent);
   const approach = smooth(charge.motionElapsed / raisedAt);
   const fall = unit((charge.motionElapsed - raisedAt) / descent) ** 3;
@@ -24,8 +24,8 @@ function slamMotion(elapsed: number, flight: number, score: number) {
   return { strength, approach, lift };
 }
 
-export function slamFlight(from: CardPosition, to: CardPosition, elapsed: number, flight: number, score: number): CardPosition {
-  const { strength, approach, lift } = slamMotion(elapsed, flight, score);
+export function slamFlight(from: CardPosition, to: CardPosition, elapsed: number, flight: number, score: number, hold = 0): CardPosition {
+  const { strength, approach, lift } = slamMotion(elapsed, flight, score, hold);
   const width = from.width + (to.width - from.width) * approach;
   const scale = 1 + lift * (.08 + strength * .045);
   return {
@@ -37,9 +37,9 @@ export function slamFlight(from: CardPosition, to: CardPosition, elapsed: number
   };
 }
 
-export function slamPlayFlight(from: CardPosition[], to: CardPosition[], elapsed: number, flight: number, score: number, boardWidth: number, inset: number): CardPosition[] {
-  const { lift } = slamMotion(elapsed, flight, score);
-  const positions = from.map((source, index) => slamFlight(source, to[index]!, elapsed, flight, score));
+export function slamPlayFlight(from: CardPosition[], to: CardPosition[], elapsed: number, flight: number, score: number, boardWidth: number, inset: number, hold = 0): CardPosition[] {
+  const { lift } = slamMotion(elapsed, flight, score, hold);
+  const positions = from.map((source, index) => slamFlight(source, to[index]!, elapsed, flight, score, hold));
   if (!positions.length || lift < 1e-8) return positions;
   const corner = CORNER_WIDTH / ART_WIDTH;
   // Spread the raised group enough to keep every identifying corner readable.
@@ -63,8 +63,8 @@ export function slamPlayFlight(from: CardPosition[], to: CardPosition[], elapsed
   }));
 }
 
-export function slamShadow(from: CardPosition, to: CardPosition, elapsed: number, flight: number, score: number) {
-  const { strength, approach, lift } = slamMotion(elapsed, flight, score);
+export function slamShadow(from: CardPosition, to: CardPosition, elapsed: number, flight: number, score: number, hold = 0) {
+  const { strength, approach, lift } = slamMotion(elapsed, flight, score, hold);
   const width = from.width + (to.width - from.width) * approach;
   const height = artHeight(width);
   // Project onto the surface beneath the moving card. Height separates and softens the shadow.
