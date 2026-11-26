@@ -575,9 +575,8 @@ export class CardTable extends Phaser.Scene {
         outgoing.forEach((image, index) => this.moveCard(image, prior[index]!, outgoingTargets[index]!, spread));
         const raised = score > 0 ? slamPlayFlight(incoming.map(card => card.from), incoming.map(card => card.appended),
           elapsed, timing.flight, score, width, layout.inset + HAND_FADE_WIDTH) : undefined;
-        const direction = incoming[0]!.from.x > incoming[0]!.appended.x ? -1 : 1;
         const gentle = score === 0 && !alreadyQueued
-          ? incoming.map(({ from, appended }) => gentlePlayFrame(from, appended, elapsed, timing.flight, direction)) : undefined;
+          ? incoming.map(({ from, appended }) => gentlePlayFrame(from, appended, elapsed, timing.flight)) : undefined;
         incoming.forEach(({ image, from, appended, id }, index) => {
           if (score > 0) {
             const position = raised![index]!;

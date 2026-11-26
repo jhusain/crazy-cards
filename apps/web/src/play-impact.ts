@@ -10,22 +10,24 @@ export const slamDescent = (score: number) => 115 / (1 + slamIntensity(score) * 
 
 export const GENTLE_TOUCHDOWN = .64;
 
-export function gentlePlayFrame(from: CardPosition, to: CardPosition, elapsed: number, flight: number, direction = from.x > to.x ? -1 : 1) {
+export function gentlePlayFrame(from: CardPosition, to: CardPosition, elapsed: number, flight: number) {
   const progress = unit(elapsed / flight);
   const air = unit(progress / GENTLE_TOUCHDOWN);
   const glide = unit((progress - GENTLE_TOUCHDOWN) / (1 - GENTLE_TOUCHDOWN));
-  const distance = to.width * .12;
-  const touchdownX = to.x - direction * distance;
-  // Match horizontal velocity at touchdown so contact flows into the on-table glide.
-  const tangent = direction * distance * 3 * GENTLE_TOUCHDOWN / (1 - GENTLE_TOUCHDOWN);
-  const groundX = progress < GENTLE_TOUCHDOWN
-    ? from.x + (touchdownX - from.x) * smooth(air) + tangent * (air ** 3 - air ** 2)
-    : touchdownX + direction * distance * (1 - (1 - glide) ** 3);
-  const groundY = from.y + (to.y - from.y) * smooth(air);
+  // Both phases advance along one source-to-destination vector. Touch down at 88%
+  // of that path and carry the same velocity into the eased, on-table remainder.
+  const touchdown = .88;
+  const tangent = (1 - touchdown) * 3 * GENTLE_TOUCHDOWN / (1 - GENTLE_TOUCHDOWN);
+  const travel = progress < GENTLE_TOUCHDOWN
+    ? touchdown * smooth(air) + tangent * (air ** 3 - air ** 2)
+    : touchdown + (1 - touchdown) * (1 - (1 - glide) ** 3);
+  const groundX = from.x + (to.x - from.x) * travel;
+  const groundY = from.y + (to.y - from.y) * travel;
   const width = from.width + (to.width - from.width) * smooth(air);
   const lift = progress < GENTLE_TOUCHDOWN ? Math.sin(Math.PI * air) ** 2 : 0;
   const scale = 1 + lift * .055;
   return {
+    ground: { x: groundX, y: groundY },
     position: {
       x: groundX - width * (scale - 1) / 2,
       y: groundY - lift * width * .065 - artHeight(width) * (scale - 1) / 2,
