@@ -27,6 +27,8 @@ test("table slaps honor mute and visibility, scale linearly, and release audio n
    createBufferSource() { return Object.assign(node(), { start() { starts.push(1); } }); },
    createBiquadFilter() { return { ...node(), frequency: { value: 0 } }; },
    createGain() { return { ...node(), gain: parameter() }; },
+   createDynamicsCompressor() { return { ...node(), threshold: { value: 0 }, knee: { value: 0 },
+    ratio: { value: 0 }, attack: { value: 0 }, release: { value: 0 } }; },
    createOscillator() { return Object.assign(node(), { frequency: parameter(), start() { starts.push(1); }, stop() {} }); },
   };
   const feedback = new CountdownFeedback();
@@ -39,11 +41,11 @@ test("table slaps honor mute and visibility, scale linearly, and release audio n
   assert.equal(starts.length, 0);
   feedback.tableSlam(1);
   assert.equal(starts.length, 2);
-  assert(gains.includes(.11)); assert(gains.includes(.065));
+  assert(gains.includes(3 * .11)); assert(gains.includes(3 * .065));
   gains.length = 0;
   feedback.tableSlam(5);
   assert.equal(starts.length, 4);
-  assert(gains.includes(.55)); assert(gains.includes(.325));
+  assert(gains.includes(15 * .11)); assert(gains.includes(15 * .065));
   nodes.forEach(node => node.onended?.());
   assert.equal(disconnected, nodes.length);
  } finally {

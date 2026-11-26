@@ -3,10 +3,13 @@ import { artHeight, type CardPosition } from "./table-layout.ts";
 const unit = (n: number) => Math.max(0, Math.min(1, n));
 const smooth = (n: number) => { const t = unit(n); return t * t * (3 - 2 * t); };
 export const impactStrength = (score: number) => Number.isFinite(score) ? Math.max(0, score) : 0;
+// Intensity scales the impact, independently of lift geometry and the scattering threshold.
+export const slamIntensity = (score: number) => impactStrength(score) * 3;
+export const slamDescent = (score: number) => 115 / (1 + slamIntensity(score) * .18);
 
 function slamMotion(elapsed: number, flight: number, score: number) {
   const strength = impactStrength(score);
-  const descent = 115 / (1 + strength * .18);
+  const descent = slamDescent(score);
   const raisedAt = Math.max(1, flight - descent);
   const approach = smooth(elapsed / raisedAt);
   const fall = unit((elapsed - raisedAt) / descent) ** 3;
@@ -62,7 +65,7 @@ export function scatteredCard(home: CardPosition, origin: CardPosition, score: n
 
 export function tableShock(elapsed: number, impact: number, score: number) {
   const t = (elapsed - impact) / 210;
-  const amplitude = t >= 0 && t < 1 ? impactStrength(score) * .7 * (1 - t) ** 2 : 0;
+  const amplitude = t >= 0 && t < 1 ? slamIntensity(score) * .7 * (1 - t) ** 2 : 0;
   if (!amplitude) return { x: 0, y: 0 };
   return { x: Math.sin(t * Math.PI * 9) * amplitude, y: Math.cos(t * Math.PI * 12) * amplitude };
 }

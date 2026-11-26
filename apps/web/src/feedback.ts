@@ -1,4 +1,4 @@
-import { impactStrength } from "./play-impact.ts";
+import { slamIntensity } from "./play-impact.ts";
 
 // Phone feedback is explicitly opt-in, then unlocked by a trusted tap.
 export class CountdownFeedback {
@@ -86,10 +86,17 @@ export class CountdownFeedback {
     source.start(now);
   }
   tableSlam(score: number): void {
-    const strength = impactStrength(score);
+    const strength = slamIntensity(score);
     if (!strength || !this.sound || document.hidden || this.context?.state !== "running") return;
     const context = this.context, now = context.currentTime;
     const duration = .24;
+    const limiter = context.createDynamicsCompressor();
+    limiter.threshold.value = -3;
+    limiter.knee.value = 6;
+    limiter.ratio.value = 8;
+    limiter.attack.value = .001;
+    limiter.release.value = .08;
+    limiter.connect(context.destination);
     // A brief palm slap over a low, damped wooden resonance, rather than a sustained rumble.
     const buffer = context.createBuffer(1, Math.ceil(context.sampleRate * duration), context.sampleRate);
     const samples = buffer.getChannelData(0);
@@ -104,7 +111,7 @@ export class CountdownFeedback {
     filter.frequency.value = 2100;
     const slapGain = context.createGain();
     slapGain.gain.setValueAtTime(strength * .11, now);
-    slap.connect(filter).connect(slapGain).connect(context.destination);
+    slap.connect(filter).connect(slapGain).connect(limiter);
     const body = context.createOscillator();
     body.type = "sine";
     body.frequency.setValueAtTime(115, now);
@@ -113,9 +120,9 @@ export class CountdownFeedback {
     bodyGain.gain.setValueAtTime(.0001, now);
     bodyGain.gain.exponentialRampToValueAtTime(strength * .065, now + .003);
     bodyGain.gain.exponentialRampToValueAtTime(.0001, now + duration);
-    body.connect(bodyGain).connect(context.destination);
+    body.connect(bodyGain).connect(limiter);
     slap.onended = () => { slap.disconnect(); filter.disconnect(); slapGain.disconnect(); };
-    body.onended = () => { body.disconnect(); bodyGain.disconnect(); };
+    body.onended = () => { body.disconnect(); bodyGain.disconnect(); limiter.disconnect(); };
     slap.start(now);
     body.start(now);
     body.stop(now + duration);

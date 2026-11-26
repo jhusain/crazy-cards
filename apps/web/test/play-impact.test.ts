@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { otherSeat } from "@crazy-eights/protocol";
 import { GameServer } from "@crazy-eights/game-server";
-import { slamFlight, slamShadow, impactEnvelope, scatteredCard, tableShock } from "../src/play-impact.ts";
+import { slamFlight, slamShadow, slamDescent, slamIntensity, impactEnvelope, scatteredCard, tableShock } from "../src/play-impact.ts";
 import { drawTimeline, playPhases, playReflow, tableAnimationTime, PLAY_FLIGHT, PLAY_HOLD, PLAY_TIME } from "../src/table-timing.ts";
 import { artHeight } from "../src/table-layout.ts";
 
@@ -21,7 +21,7 @@ test("slams lift and enlarge the group, then land exactly without changing the d
       assert(slam.collapseStart > slam.flight);
     }
     const flight = playPhases(false, false, false, false, score).flight;
-    const raised = slamFlight(from, landing, flight - 115 / (1 + score * .18), flight, score);
+    const raised = slamFlight(from, landing, flight - slamDescent(score), flight, score);
     assert(raised.width > landing.width);
     assert(raised.y < landing.y);
     const start = slamFlight(from, landing, 0, flight, score);
@@ -51,7 +51,7 @@ test("raised cards project a moving shadow onto the surface below and lose it on
     assert.equal(atStart.alpha, 0);
     assert.equal(atStart.x, source.x);
     assert.equal(atStart.y, source.y);
-    const elapsed = flight - 115 / (1 + score * .18);
+    const elapsed = flight - slamDescent(score);
     const raised = slamFlight(source, landing, elapsed, flight, score);
     const shadow = slamShadow(source, landing, elapsed, flight, score);
     assert(shadow.y > raised.y);
@@ -70,6 +70,7 @@ test("raised cards project a moving shadow onto the surface below and lose it on
 });
 
 test("table shake scales linearly with score and stops completely", () => {
+  assert.equal(tableShock(0, 0, 1).y, 3 * .7);
   for (const elapsed of [10, 30, 90, 150]) {
     const low = tableShock(elapsed, 0, 1), high = tableShock(elapsed, 0, 9);
     assert(Math.abs(high.x - low.x * 9) < 1e-8);
@@ -77,6 +78,16 @@ test("table shake scales linearly with score and stops completely", () => {
   }
   assert.deepEqual(tableShock(0, 100, 9), { x: 0, y: 0 });
   assert.deepEqual(tableShock(400, 100, 9), { x: 0, y: 0 });
+});
+
+test("each aggression step adds three intensity units and triples the descent-speed increment", () => {
+  assert.equal(slamIntensity(0), 0);
+  for (let score = 1; score <= 15; score++) {
+    assert.equal(slamIntensity(score) - slamIntensity(score - 1), 3);
+    const previousIncrement = .18 / 115;
+    const increment = 1 / slamDescent(score) - 1 / slamDescent(score - 1);
+    assert(Math.abs(increment - 3 * previousIncrement) < 1e-10);
+  }
 });
 
 test("only scores four and above scatter the other hand, radially toward its own edge", () => {
