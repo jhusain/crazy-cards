@@ -544,7 +544,9 @@ export class CardTable extends Phaser.Scene {
       const image = this.drawImage(this.art.face(card, reel ? { reel, progress: 0 } : undefined), from, depth);
       this.priorCardPositions.set(card.id, from);
       const collapsed = collapsedPositions[index]!;
-      return { image, from, appended: alreadyQueued ? from : landing[index]!, collapsed, target: targets[index]!, id: card.id, card, reel };
+      // Aggressive plays leave their staged slots and strike just after the old discard,
+      // then share the old play's collapse timeline. Only quiet staged plays stay in place.
+      return { image, from, appended: alreadyQueued && score === 0 ? from : landing[index]!, collapsed, target: targets[index]!, id: card.id, card, reel };
     });
     if (score > 0) {
       const first = incoming[0]!.appended, last = incoming.at(-1)!.appended;
