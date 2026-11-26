@@ -664,6 +664,12 @@ function setupDialogs(): void {
     settingsDialog.close();
     send({ type: "debug-aggressiveness" });
   };
+  element("test-vibration").onclick = () => {
+    if (!debug) return;
+    const result = element("vibration-test-result");
+    result.textContent = feedback.testVibration();
+    result.hidden = false;
+  };
   for (const button of document.querySelectorAll<HTMLButtonElement>("dialog [data-close]")) {
     button.onclick = () => button.closest("dialog")?.close();
   }

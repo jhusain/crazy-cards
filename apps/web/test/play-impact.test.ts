@@ -161,7 +161,7 @@ test("vibration pulse strength fades, increases with aggression, and fits playba
   for (const score of [1, 4, 9, 15]) for (const speed of [.25, .5, 1, 2]) {
     const duration = shakeDuration(score) / speed;
     const pattern = impactVibration(score, duration);
-    assert(pattern.length <= 80);
+    assert(pattern.length <= 10);
     assert(pattern.every(value => Number.isInteger(value) && value >= 0));
     assert.equal(pattern.reduce((sum, value) => sum + value, 0), Math.round(duration));
     const pulses = pattern.filter((_, index) => index % 2 === 0);

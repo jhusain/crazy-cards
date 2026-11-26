@@ -55,15 +55,31 @@ export class CountdownFeedback {
     } else if (this.vibration && !this.sound) this.vibrate();
   }
   private vibrate(): void {
+    this.requestVibration(25, "Countdown vibration");
+  }
+  private requestVibration(pattern: number | number[], label: string): { accepted: boolean; message: string } {
+    let accepted = false;
     let message: string;
     try {
-      if (typeof navigator.vibrate !== "function") message = "Vibration API unavailable";
-      else if (!navigator.vibrate(25)) message = `Vibration rejected (user activation: ${navigator.userActivation?.hasBeenActive ?? "unknown"})`;
-      else message = "Vibration request accepted (25 ms)";
+      if (document.hidden) message = "Vibration unavailable while the page is hidden.";
+      else if (typeof navigator.vibrate !== "function") message = "This browser does not expose vibration support.";
+      else {
+        accepted = navigator.vibrate(pattern);
+        message = accepted
+          ? `${label}: browser accepted the request; physical vibration is not confirmed.`
+          : `${label}: browser rejected the request (page interaction: ${navigator.userActivation?.hasBeenActive ?? "unknown"}).`;
+      }
     } catch (error) {
       message = `Vibration error: ${error instanceof Error ? error.message : String(error)}`;
     }
     this.reportVibration(message);
+    return { accepted, message };
+  }
+  testVibration(): string {
+    this.stopImpactVibration();
+    // Run directly in the button's click handler, with a clearly perceptible test duration.
+    const result = this.requestVibration(600, "600 ms vibration test");
+    return result.accepted ? `${result.message} You should feel one sustained buzz. If you do not, check the phone’s vibration intensity, silent mode, and Do Not Disturb settings.` : result.message;
   }
   suitTick(sound: "tick" | "click"): void {
     if (!this.sound || document.hidden || this.context?.state !== "running") return;
@@ -96,13 +112,8 @@ export class CountdownFeedback {
     if (!strength || document.hidden) return;
     if (!this.sound) {
       if (this.vibration) {
-        try {
-          const pattern = impactVibration(score, shakeMs);
-          if (pattern.length && typeof navigator.vibrate === "function") {
-            this.impactVibrating = navigator.vibrate(pattern);
-            this.reportVibration(this.impactVibrating ? "Impact vibration requested" : "Impact vibration rejected by browser");
-          } else this.reportVibration("Vibration API unavailable");
-        } catch { this.reportVibration("Impact vibration unavailable"); }
+        const pattern = impactVibration(score, shakeMs);
+        if (pattern.length) this.impactVibrating = this.requestVibration(pattern, "Impact vibration").accepted;
       }
       return;
     }

@@ -107,8 +107,8 @@ export function impactVibration(score: number, durationMs = shakeDuration(score)
   if (!impactStrength(score) || !Number.isFinite(durationMs) || durationMs <= 0) return [];
   const duration = Math.round(durationMs);
   // The browser exposes pulse timing, not motor amplitude. Duty cycle follows the shake envelope.
-  // Limit the pattern length even during slow-motion replay.
-  const cell = Math.max(50, Math.ceil(duration / 40));
+  // Keep within the standard's ten-entry pattern limit, including slow-motion replay.
+  const cell = Math.max(50, Math.ceil(duration / 5));
   const pattern: number[] = [];
   for (let elapsed = 0; elapsed < duration; elapsed += cell) {
     const span = Math.min(cell, duration - elapsed);

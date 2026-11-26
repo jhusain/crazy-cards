@@ -18,7 +18,15 @@ test("muted impacts vibrate in sync, honor the vibration setting, and cancel cle
   const feedback = new CountdownFeedback();
   feedback.tableSlam(9, 600);
   assert.equal(calls.length, 0);
+  const testResult = feedback.testVibration();
+  assert.deepEqual(calls, [600]);
+  assert.match(testResult, /physical vibration is not confirmed/);
+  assert.equal(feedback.vibration, false); // The explicit test does not change saved preferences.
+  calls.length = 0;
   feedback.vibration = true;
+  feedback.tick();
+  assert.deepEqual(calls, [25]);
+  calls.length = 0;
   feedback.tableSlam(9, 600);
   assert.deepEqual(calls, [impactVibration(9, 600)]);
   feedback.stopImpactVibration();
@@ -33,8 +41,11 @@ test("muted impacts vibrate in sync, honor the vibration setting, and cancel cle
   document.hidden = false;
   feedback.tableSlam(0, 600);
   assert.equal(calls.length, count);
+  navigator.vibrate = () => false;
+  assert.match(feedback.testVibration(), /rejected/);
   Reflect.deleteProperty(navigator, "vibrate");
   assert.doesNotThrow(() => feedback.tableSlam(9, 600));
+  assert.match(feedback.testVibration(), /does not expose vibration support/);
  } finally {
   if (savedDocument) Object.defineProperty(globalThis, "document", savedDocument);
   else Reflect.deleteProperty(globalThis, "document");
