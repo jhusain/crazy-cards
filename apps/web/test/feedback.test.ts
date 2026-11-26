@@ -126,7 +126,7 @@ test("table slaps honor mute and visibility, scale linearly, and release audio n
   gains.length = 0;
   feedback.tableSlam(5);
   assert.equal(starts.length, 4);
-  assert(gains.includes(15 * .16)); assert(gains.includes(15 * .095));
+  assert(gains.includes(15 * .25)); assert(gains.includes(15 * .13));
   feedback.powerPulse(3, 1);
   assert.equal(starts.length, 4);
   feedback.powerPulse(5, .25);

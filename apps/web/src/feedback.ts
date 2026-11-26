@@ -159,7 +159,7 @@ export class CountdownFeedback {
     if (!this.sound || this.context?.state !== "running") return;
     const context = this.context, now = context.currentTime;
     const explosive = score >= 4;
-    const duration = explosive ? Math.max(.4, Math.min(1.6, (shakeMs ?? 500) / 1000 + .25)) : .24;
+    const duration = explosive ? Math.max(1.3, Math.min(3, (shakeMs ?? 500) / 1000 + .8)) : .24;
     const limiter = context.createDynamicsCompressor();
     limiter.threshold.value = -3;
     limiter.knee.value = 6;
@@ -170,31 +170,41 @@ export class CountdownFeedback {
     const output = context.createGain();
     output.gain.setValueAtTime(4, now);
     limiter.connect(output).connect(context.destination);
-    // High aggression trades the short palm slap for a crack, rolling noise, and deep sub-bass.
+    // A broadband blast gives way to rolling brown noise and a long bass tail.
     const buffer = context.createBuffer(1, Math.ceil(context.sampleRate * duration), context.sampleRate);
     const samples = buffer.getChannelData(0);
+    let brown = 0;
     for (let i = 0; i < samples.length; i++) {
       const t = i / context.sampleRate;
-      const envelope = explosive ? Math.exp(-t * 70) * .45 + Math.exp(-t * 4.5) * .55
-        : Math.exp(-t * 90) * .8 + Math.exp(-t * 25) * .2;
-      samples[i] = (Math.random() * 2 - 1) * envelope;
+      const noise = Math.random() * 2 - 1;
+      if (explosive) {
+        brown = (brown + noise * .035) / 1.035;
+        const tail = (1 - t / duration) ** 1.2;
+        const rolling = .8 + .2 * Math.sin(t * 37) * Math.sin(t * 53);
+        samples[i] = noise * Math.exp(-t * 55) * .8 + brown * 4 * tail * rolling;
+      } else samples[i] = noise * (Math.exp(-t * 90) * .8 + Math.exp(-t * 25) * .2);
     }
     const slap = context.createBufferSource();
     slap.buffer = buffer;
     const filter = context.createBiquadFilter();
     filter.type = "lowpass";
-    filter.frequency.value = 2100;
-    if (explosive) filter.frequency.exponentialRampToValueAtTime(90, now + duration);
+    filter.frequency.setValueAtTime(explosive ? 6500 : 2100, now);
+    if (explosive) {
+      filter.frequency.exponentialRampToValueAtTime(180, now + .16);
+      filter.frequency.exponentialRampToValueAtTime(75, now + duration);
+    }
     const slapGain = context.createGain();
-    slapGain.gain.setValueAtTime(strength * (explosive ? .16 : .11), now);
+    slapGain.gain.setValueAtTime(strength * (explosive ? .25 : .11), now);
     slap.connect(filter).connect(slapGain).connect(limiter);
     const body = context.createOscillator();
-    body.type = "sine";
-    body.frequency.setValueAtTime(explosive ? 85 : 115, now);
-    body.frequency.exponentialRampToValueAtTime(explosive ? 28 : 52, now + duration);
+    body.type = explosive ? "triangle" : "sine";
+    body.frequency.setValueAtTime(explosive ? 125 : 115, now);
+    if (explosive) body.frequency.exponentialRampToValueAtTime(48, now + .09);
+    body.frequency.exponentialRampToValueAtTime(explosive ? 30 : 52, now + duration);
     const bodyGain = context.createGain();
     bodyGain.gain.setValueAtTime(.0001, now);
-    bodyGain.gain.exponentialRampToValueAtTime(strength * (explosive ? .095 : .065), now + .003);
+    bodyGain.gain.exponentialRampToValueAtTime(strength * (explosive ? .13 : .065), now + .003);
+    if (explosive) bodyGain.gain.exponentialRampToValueAtTime(strength * .055, now + .18);
     bodyGain.gain.exponentialRampToValueAtTime(.0001, now + duration);
     body.connect(bodyGain).connect(limiter);
     if (explosive) { this.powerSources.add(slap); this.powerSources.add(body); }

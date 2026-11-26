@@ -541,6 +541,7 @@ export class CardTable extends Phaser.Scene {
     const ordinaryReplayHidden = this.replayButton.hidden;
     const pulses = chargePulseThresholds(score);
     let nextPulse = 0;
+    let chargeColorPhase = 0;
     const fire = timing.burnStart !== null ? this.add.graphics().setDepth(CARD_DEPTH.discard + old.length - .5) : undefined;
     const anchor = outgoingTargets[0]!;
     const collapsedPositions = collapsePlayPositions(anchor, last.length);
@@ -589,12 +590,13 @@ export class CardTable extends Phaser.Scene {
             x: (Math.min(...positions.map(p => p.x)) + Math.max(...positions.map(p => p.x + p.width))) / 2,
             y: (Math.min(...positions.map(p => p.y)) + Math.max(...positions.map(p => p.y + artHeight(p.width)))) / 2,
           };
-          this.drawPowerCharge(chargeBackground, width, layout.tableHeight, center, charge.progress, elapsed - charge.start);
           // At most one pulse per rendered frame; skipped frames never release a burst of sounds.
           if (nextPulse < pulses.length && charge.progress >= pulses[nextPulse]!) {
             while (nextPulse < pulses.length && charge.progress >= pulses[nextPulse]!) nextPulse++;
+            chargeColorPhase = 1 - chargeColorPhase;
             this.controls.powerPulse?.(score, charge.progress);
           }
+          this.drawPowerCharge(chargeBackground, width, layout.tableHeight, center, charge.progress, chargeColorPhase);
         }
       }
       for (const { card, reel } of incoming) if (reel) {
@@ -695,14 +697,13 @@ export class CardTable extends Phaser.Scene {
   }
 
   private drawPowerCharge(graphics: Phaser.GameObjects.Graphics, width: number, height: number,
-    center: { x: number; y: number }, progress: number, elapsed: number): void {
+    center: { x: number; y: number }, progress: number, colorPhase: number): void {
     const palette = chargePalette(progress);
     graphics.fillStyle(palette.base, 1);
     graphics.fillRect(0, 0, width, height);
-    // Stationary wedges swap green and gold rapidly while fading to white.
+    // Each audible charge pulse swaps the stationary green and gold wedges.
     const radius = Math.max(...[0, width].flatMap(x => [0, height].map(y => Math.hypot(x - center.x, y - center.y)))) * 2;
     const count = 24;
-    const colorPhase = Math.floor(elapsed / 70) % 2;
     for (let ray = 0; ray < count; ray++) {
       const start = ray * Math.PI * 2 / count;
       const end = (ray + 1) * Math.PI * 2 / count;

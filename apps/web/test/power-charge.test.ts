@@ -60,6 +60,7 @@ test("phaser pulse intervals get shorter toward white, with more pulses at highe
   assert.deepEqual(chargePulseThresholds(3), []);
   for (const score of [4, 9, 15]) {
     const pulses = chargePulseThresholds(score);
+    assert.equal(pulses.length, 2 * Math.min(12, 6 + Math.floor((score - 4) * .6)));
     assert.equal(pulses[0], 0);
     assert(pulses.at(-1)! < 1);
     let previous = Infinity;

@@ -26,8 +26,8 @@ export function chargePalette(progress: number) {
 
 export function chargePulseThresholds(score: number): number[] {
   if (score < 4) return [];
-  const count = Math.min(12, 6 + Math.floor((score - 4) * .6));
-  const intervals = Array.from({ length: count - 1 }, (_, index) => .78 ** index);
+  const count = 2 * Math.min(12, 6 + Math.floor((score - 4) * .6));
+  const intervals = Array.from({ length: count - 1 }, (_, index) => .78 ** (index / 2));
   const total = intervals.reduce((sum, value) => sum + value, 0);
   let position = 0;
   return [0, ...intervals.map(interval => { position += interval; return position / total * .96; })];
