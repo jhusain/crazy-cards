@@ -8,6 +8,37 @@ export const impactStrength = (score: number) => Number.isFinite(score) ? Math.m
 export const slamIntensity = (score: number) => impactStrength(score) * 3;
 export const slamDescent = (score: number) => 115 / (1 + slamIntensity(score) * .18);
 
+export const GENTLE_TOUCHDOWN = .64;
+
+export function gentlePlayFrame(from: CardPosition, to: CardPosition, elapsed: number, flight: number, direction = from.x > to.x ? -1 : 1) {
+  const progress = unit(elapsed / flight);
+  const air = unit(progress / GENTLE_TOUCHDOWN);
+  const glide = unit((progress - GENTLE_TOUCHDOWN) / (1 - GENTLE_TOUCHDOWN));
+  const distance = to.width * .12;
+  const touchdownX = to.x - direction * distance;
+  // Match horizontal velocity at touchdown so contact flows into the on-table glide.
+  const tangent = direction * distance * 3 * GENTLE_TOUCHDOWN / (1 - GENTLE_TOUCHDOWN);
+  const groundX = progress < GENTLE_TOUCHDOWN
+    ? from.x + (touchdownX - from.x) * smooth(air) + tangent * (air ** 3 - air ** 2)
+    : touchdownX + direction * distance * (1 - (1 - glide) ** 3);
+  const groundY = from.y + (to.y - from.y) * smooth(air);
+  const width = from.width + (to.width - from.width) * smooth(air);
+  const lift = progress < GENTLE_TOUCHDOWN ? Math.sin(Math.PI * air) ** 2 : 0;
+  const scale = 1 + lift * .055;
+  return {
+    position: {
+      x: groundX - width * (scale - 1) / 2,
+      y: groundY - lift * width * .065 - artHeight(width) * (scale - 1) / 2,
+      width: width * scale,
+      clipWidth: ((from.clipWidth ?? from.width) + ((to.clipWidth ?? to.width) - (from.clipWidth ?? from.width)) * smooth(air)) * scale,
+      clipHeight: ((from.clipHeight ?? artHeight(from.width)) + ((to.clipHeight ?? artHeight(to.width)) - (from.clipHeight ?? artHeight(from.width))) * smooth(air)) * scale,
+    },
+    shadow: { x: groundX + lift * width * .025, y: groundY + lift * width * .035,
+      width, height: artHeight(width), blur: width * lift * .025, alpha: lift * .12 },
+    grounded: progress >= GENTLE_TOUCHDOWN,
+  };
+}
+
 function slamMotion(elapsed: number, flight: number, score: number) {
   const strength = impactStrength(score);
   const descent = slamDescent(score);

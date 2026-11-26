@@ -2,12 +2,58 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { otherSeat } from "@crazy-eights/protocol";
 import { GameServer } from "@crazy-eights/game-server";
-import { slamFlight, slamPlayFlight, slamShadow, slamDescent, slamIntensity, impactEnvelope, impactVibration, scatteredCard, tableShock } from "../src/play-impact.ts";
+import { GENTLE_TOUCHDOWN, gentlePlayFrame, slamFlight, slamPlayFlight, slamShadow, slamDescent, slamIntensity, impactEnvelope, impactVibration, scatteredCard, tableShock } from "../src/play-impact.ts";
 import { drawTimeline, playPhases, playReflow, tableAnimationTime, shakeDuration, PLAY_FLIGHT, PLAY_SHAKE, PLAY_TIME } from "../src/table-timing.ts";
 import { ART_WIDTH, CORNER_WIDTH, PILE_STEP, artHeight } from "../src/table-layout.ts";
 
 const from = { x: 130, y: 560, width: 100 };
 const landing = { x: 210, y: 300, width: 90 };
+
+test("quiet hand plays lift with a subtle shadow, touch down early, then glide on the table", () => {
+  const flight = playPhases(false, false).flight;
+  for (const source of [from, { x: 320, y: -50, width: 100 }]) {
+    const start = gentlePlayFrame(source, landing, 0, flight);
+    assert.equal(start.position.x, source.x);
+    assert.equal(start.position.y, source.y);
+    assert.equal(start.position.width, source.width);
+    assert.equal(start.shadow.alpha, 0);
+    const raised = gentlePlayFrame(source, landing, flight * GENTLE_TOUCHDOWN / 2, flight);
+    assert(raised.position.y < raised.shadow.y);
+    assert(raised.position.width > raised.shadow.width);
+    assert(raised.shadow.alpha > 0 && raised.shadow.alpha <= .12);
+    const touchdown = gentlePlayFrame(source, landing, flight * GENTLE_TOUCHDOWN, flight);
+    assert(touchdown.grounded);
+    assert.equal(touchdown.position.y, landing.y);
+    assert.equal(touchdown.position.width, landing.width);
+    assert.equal(touchdown.shadow.alpha, 0);
+    assert.notEqual(touchdown.position.x, landing.x);
+    const middle = gentlePlayFrame(source, landing, flight * (GENTLE_TOUCHDOWN + (1 - GENTLE_TOUCHDOWN) / 2), flight);
+    assert(middle.grounded);
+    assert.equal(middle.position.y, landing.y);
+    assert.equal(middle.position.width, landing.width);
+    assert(Math.abs(middle.position.x - landing.x) < Math.abs(touchdown.position.x - landing.x));
+    const end = gentlePlayFrame(source, landing, flight, flight);
+    assert.equal(end.position.x, landing.x);
+    assert.equal(end.position.y, landing.y);
+    assert.equal(end.position.width, landing.width);
+  }
+  assert.equal(playPhases(true, false, false, false, 0).flight, 0);
+});
+
+test("touchdown flows into the glide continuously and eases to rest", () => {
+  const flight = playPhases(false, false).flight;
+  const touch = flight * GENTLE_TOUCHDOWN;
+  const step = .001;
+  for (const source of [from, { ...from, x: 320 }]) {
+    const x = (time: number) => gentlePlayFrame(source, landing, time, flight).position.x;
+    const arrivalVelocity = (x(touch) - x(touch - step)) / step;
+    const glideVelocity = (x(touch + step) - x(touch)) / step;
+    assert(Math.abs(arrivalVelocity - glideVelocity) < .0001);
+    assert(Math.abs((x(flight) - x(flight - step)) / step) < .00001);
+  }
+  assert.deepEqual(tableShock(100, 0, 0), { x: 0, y: 0 });
+  assert.deepEqual(impactVibration(0), []);
+});
 
 test("slams lift and enlarge the group, then land exactly without changing the discard slide", () => {
   for (const score of [1, 4, 5, 9, 15]) {
