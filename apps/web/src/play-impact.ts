@@ -1,5 +1,5 @@
 import { ART_WIDTH, CORNER_WIDTH, artHeight, type CardPosition } from "./table-layout.ts";
-import { PLAY_SHAKE } from "./table-timing.ts";
+import { shakeDuration } from "./table-timing.ts";
 
 const unit = (n: number) => Math.max(0, Math.min(1, n));
 const smooth = (n: number) => { const t = unit(n); return t * t * (3 - 2 * t); };
@@ -91,8 +91,26 @@ export function scatteredCard(home: CardPosition, origin: CardPosition, score: n
 }
 
 export function tableShock(elapsed: number, impact: number, score: number) {
-  const t = (elapsed - impact) / PLAY_SHAKE;
+  const duration = shakeDuration(score);
+  if (!duration) return { x: 0, y: 0 };
+  const t = (elapsed - impact) / duration;
   const amplitude = t >= 0 && t < 1 ? slamIntensity(score) * .7 * (1 - t) ** 2 : 0;
   if (!amplitude) return { x: 0, y: 0 };
   return { x: Math.sin(t * Math.PI * 9) * amplitude, y: Math.cos(t * Math.PI * 12) * amplitude };
+}
+
+export function impactVibration(score: number, durationMs = shakeDuration(score)): number[] {
+  if (!impactStrength(score) || !Number.isFinite(durationMs) || durationMs <= 0) return [];
+  const duration = Math.round(durationMs);
+  // The browser exposes pulse timing, not motor amplitude. Duty cycle follows the shake envelope.
+  // Limit the pattern length even during slow-motion replay.
+  const cell = Math.max(50, Math.ceil(duration / 40));
+  const pattern: number[] = [];
+  for (let elapsed = 0; elapsed < duration; elapsed += cell) {
+    const span = Math.min(cell, duration - elapsed);
+    const envelope = (1 - elapsed / duration) ** 2;
+    const on = Math.min(span, Math.max(1, Math.round(span * Math.min(.85, (.2 + score * .05) * envelope))));
+    pattern.push(on, span - on);
+  }
+  return pattern;
 }

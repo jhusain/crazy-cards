@@ -10,7 +10,7 @@ import {
   committedFromPlay, collapsePlayPositions, automaticActionPosition, replayPosition, stockLayerCount, tableLayout, type CardPosition, type QueuedPileSlots,
 } from "./table-layout.ts";
 import {
-  HAND_DEAL, HAND_DRAW, OPPONENT_DEAL, PLAY_FLIGHT, PLAY_TIME, STAGE_FLIGHT, drawTimeline, handReadinessTimeline, playPhases, playReflow, opponentWildPlay,
+  HAND_DEAL, HAND_DRAW, OPPONENT_DEAL, PLAY_FLIGHT, PLAY_TIME, STAGE_FLIGHT, drawTimeline, handReadinessTimeline, playPhases, playReflow, opponentWildPlay, shakeDuration,
 } from "./table-timing.ts";
 
 type Layout = ReturnType<typeof tableLayout>;
@@ -45,7 +45,7 @@ type Controls = {
   tapCard: (id: number) => void; flickCard: (id: number) => void;
   playQueue: () => void; clearPlay: () => void; ready: () => void; suitTick?: (sound: "tick" | "click") => void;
   fireRumble?: (durationMs: number) => void; stopFireRumble?: () => void;
-  tableSlam?: (score: number) => void;
+  tableSlam?: (score: number, shakeMs: number) => void; stopImpactVibration?: () => void;
 };
 type CardTarget = { card: Card; position: CardPosition; dimmed: boolean; staged: boolean; depth: number };
 type Arrival = { image: CardImage; position: CardPosition; id?: number };
@@ -121,6 +121,7 @@ export class CardTable extends Phaser.Scene {
     window.addEventListener("resize", resize);
     this.events.once("shutdown", () => {
       this.controls.stopFireRumble?.();
+      this.controls.stopImpactVibration?.();
       this.board.style.removeProperty("transform");
       observer.disconnect();
       window.removeEventListener("resize", resize);
@@ -148,6 +149,7 @@ export class CardTable extends Phaser.Scene {
     this.painting = true;
     try {
       this.controls.stopFireRumble?.();
+      this.controls.stopImpactVibration?.();
       this.tweens.killAll();
       this.board.style.removeProperty("transform");
       this.impactCards = [];
@@ -664,7 +666,7 @@ export class CardTable extends Phaser.Scene {
       const elapsed = progress * timing.total;
       if (!sounded && elapsed >= timing.flight) {
         sounded = true;
-        this.controls.tableSlam?.(score);
+        this.controls.tableSlam?.(score, shakeDuration(score) / this.speed);
       }
       const shake = tableShock(elapsed, timing.flight, score);
       this.board.style.transform = `translate(${shake.x}px, ${shake.y}px)`;

@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { otherSeat } from "@crazy-eights/protocol";
 import { GameServer } from "@crazy-eights/game-server";
-import { slamFlight, slamPlayFlight, slamShadow, slamDescent, slamIntensity, impactEnvelope, scatteredCard, tableShock } from "../src/play-impact.ts";
-import { drawTimeline, playPhases, playReflow, tableAnimationTime, PLAY_FLIGHT, PLAY_SHAKE, PLAY_TIME } from "../src/table-timing.ts";
+import { slamFlight, slamPlayFlight, slamShadow, slamDescent, slamIntensity, impactEnvelope, impactVibration, scatteredCard, tableShock } from "../src/play-impact.ts";
+import { drawTimeline, playPhases, playReflow, tableAnimationTime, shakeDuration, PLAY_FLIGHT, PLAY_SHAKE, PLAY_TIME } from "../src/table-timing.ts";
 import { ART_WIDTH, CORNER_WIDTH, PILE_STEP, artHeight } from "../src/table-layout.ts";
 
 const from = { x: 130, y: 560, width: 100 };
@@ -16,7 +16,7 @@ test("slams lift and enlarge the group, then land exactly without changing the d
       const slam = playPhases(queued, false, wild, burn, score);
       assert(Math.abs((slam.collapseEnd - slam.collapseStart) - (normal.collapseEnd - normal.collapseStart)) < 1e-8);
       assert(Math.abs((slam.total - slam.returnStart) - (normal.total - normal.returnStart)) < 1e-8);
-      assert(Math.abs(slam.total - normal.total - PLAY_FLIGHT - PLAY_SHAKE) < 1e-8);
+      assert(Math.abs(slam.total - normal.total - PLAY_FLIGHT - shakeDuration(score)) < 1e-8);
       assert(slam.flight > 0);
       assert(slam.collapseStart > slam.flight);
     }
@@ -79,7 +79,7 @@ test("raised groups keep every identifying corner visible, allowing card bodies 
 test("all aggressive plays finish shaking before the discard slide starts", () => {
   for (const queued of [false, true]) for (const wild of [false, true]) for (const burn of [false, true]) {
     const timing = playPhases(queued, false, wild, burn, 9);
-    assert(timing.collapseStart >= timing.flight + PLAY_SHAKE);
+    assert(timing.collapseStart >= timing.flight + shakeDuration(9));
     assert.deepEqual(tableShock(timing.collapseStart, timing.flight, 9), { x: 0, y: 0 });
   }
 });
@@ -113,12 +113,42 @@ test("raised cards project a moving shadow onto the surface below and lose it on
 test("table shake scales linearly with score and stops completely", () => {
   assert.equal(tableShock(0, 0, 1).y, 3 * .7);
   for (const elapsed of [10, 30, 90, 150]) {
-    const low = tableShock(elapsed, 0, 1), high = tableShock(elapsed, 0, 9);
+    const low = tableShock(elapsed, 0, 1), high = tableShock(elapsed * shakeDuration(9) / shakeDuration(1), 0, 9);
     assert(Math.abs(high.x - low.x * 9) < 1e-8);
     assert(Math.abs(high.y - low.y * 9) < 1e-8);
   }
   assert.deepEqual(tableShock(0, 100, 9), { x: 0, y: 0 });
-  assert.deepEqual(tableShock(400, 100, 9), { x: 0, y: 0 });
+  assert.deepEqual(tableShock(100 + shakeDuration(9), 100, 9), { x: 0, y: 0 });
+});
+
+test("stronger shakes take longer to settle and displacement fades over the remaining time", () => {
+  assert.equal(shakeDuration(0), 0);
+  assert.equal(shakeDuration(1), PLAY_SHAKE);
+  for (let score = 1; score <= 15; score++) {
+    assert(shakeDuration(score) > shakeDuration(score - 1));
+    let previous = Infinity;
+    for (const fraction of [0, .25, .5, .75, 1]) {
+      const shake = tableShock(shakeDuration(score) * fraction, 0, score);
+      const displacement = Math.abs(shake.y);
+      assert(displacement < previous);
+      assert(Math.abs(displacement - slamIntensity(score) * .7 * (1 - fraction) ** 2) < 1e-8);
+      previous = displacement;
+    }
+  }
+});
+
+test("vibration pulse strength fades, increases with aggression, and fits playback timing", () => {
+  assert.deepEqual(impactVibration(0), []);
+  for (const score of [1, 4, 9, 15]) for (const speed of [.25, .5, 1, 2]) {
+    const duration = shakeDuration(score) / speed;
+    const pattern = impactVibration(score, duration);
+    assert(pattern.length <= 80);
+    assert(pattern.every(value => Number.isInteger(value) && value >= 0));
+    assert.equal(pattern.reduce((sum, value) => sum + value, 0), Math.round(duration));
+    const pulses = pattern.filter((_, index) => index % 2 === 0);
+    assert(pulses[0]! > pulses.at(-1)!);
+  }
+  assert(impactVibration(9, 500)[0]! > impactVibration(1, 500)[0]!);
 });
 
 test("each aggression step adds three intensity units and triples the descent-speed increment", () => {
@@ -167,7 +197,7 @@ test("input locking, pickup animations, and reflow wait for the complete slam ti
   view.event = { kind: "play", seat: view.seat, aggressiveness: 9, penalty: { seat: otherSeat(view.seat), count: 2 } };
   const slam = playReflow(view)!;
   const draw = drawTimeline(view, otherSeat(view.seat));
-  assert.equal(slam.landing, PLAY_TIME + PLAY_FLIGHT + PLAY_SHAKE);
+  assert.equal(slam.landing, PLAY_TIME + PLAY_FLIGHT + shakeDuration(9));
   assert.equal(draw.start, slam.end);
   assert(tableAnimationTime(view, 1, true) > draw.total);
   assert.equal(tableAnimationTime(view, 1, false), 0);

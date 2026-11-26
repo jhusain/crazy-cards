@@ -790,7 +790,8 @@ async function start(): Promise<void> {
   scene = new CardTable(table, element("card-targets"), stockPile, discardPile, replayButton, automaticPanel, opponentHand, {
     tapCard, flickCard, playQueue: confirmPlay, clearPlay, suitTick: sound => feedback.suitTick(sound),
     fireRumble: duration => feedback.fireRumble(duration), stopFireRumble: () => feedback.stopFireRumble(),
-    tableSlam: score => feedback.tableSlam(score),
+    tableSlam: (score, shakeMs) => feedback.tableSlam(score, shakeMs),
+    stopImpactVibration: () => feedback.stopImpactVibration(),
     ready: () => send({ type: "snapshot" }),
   }, images, density);
   new Phaser.Game({

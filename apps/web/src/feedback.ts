@@ -1,9 +1,10 @@
-import { slamIntensity } from "./play-impact.ts";
+import { impactVibration, slamIntensity } from "./play-impact.ts";
 
 // Phone feedback is explicitly opt-in, then unlocked by a trusted tap.
 export class CountdownFeedback {
   private context?: AudioContext;
   private fireSource?: AudioBufferSourceNode;
+  private impactVibrating = false;
   sound = false;
   vibration = false;
   private readonly key = "crazy-eights-feedback";
@@ -85,9 +86,28 @@ export class CountdownFeedback {
     source.onended = () => { source.disconnect(); filter.disconnect(); gain.disconnect(); };
     source.start(now);
   }
-  tableSlam(score: number): void {
+  stopImpactVibration(): void {
+    if (!this.impactVibrating) return;
+    this.impactVibrating = false;
+    try { navigator.vibrate?.(0); } catch { /* Unsupported or denied by the browser. */ }
+  }
+  tableSlam(score: number, shakeMs?: number): void {
     const strength = slamIntensity(score);
-    if (!strength || !this.sound || document.hidden || this.context?.state !== "running") return;
+    if (!strength || document.hidden) return;
+    if (!this.sound) {
+      if (this.vibration) {
+        try {
+          const pattern = impactVibration(score, shakeMs);
+          if (pattern.length && typeof navigator.vibrate === "function") {
+            this.impactVibrating = navigator.vibrate(pattern);
+            this.reportVibration(this.impactVibrating ? "Impact vibration requested" : "Impact vibration rejected by browser");
+          } else this.reportVibration("Vibration API unavailable");
+        } catch { this.reportVibration("Impact vibration unavailable"); }
+      }
+      return;
+    }
+    this.stopImpactVibration();
+    if (this.context?.state !== "running") return;
     const context = this.context, now = context.currentTime;
     const duration = .24;
     const limiter = context.createDynamicsCompressor();
@@ -98,7 +118,7 @@ export class CountdownFeedback {
     limiter.release.value = .08;
     // Boost after peak control so the compressor does not cancel the requested volume increase.
     const output = context.createGain();
-    output.gain.setValueAtTime(2, now);
+    output.gain.setValueAtTime(4, now);
     limiter.connect(output).connect(context.destination);
     // A brief palm slap over a low, damped wooden resonance, rather than a sustained rumble.
     const buffer = context.createBuffer(1, Math.ceil(context.sampleRate * duration), context.sampleRate);
@@ -178,14 +198,14 @@ export class CountdownFeedback {
     const sync=()=>{sound.checked=this.sound;vibration.checked=this.vibration;this.save();};
     const enable=()=>{this.sound=true;this.vibration=true;sync();void this.unlock().then(()=>this.tick());dialog.close();};
     sound.checked=this.sound;vibration.checked=this.vibration;
-    sound.onchange=()=>{this.sound=sound.checked;if(!this.sound)this.stopFireRumble();this.save();void this.unlock();};
-    vibration.onchange=()=>{this.vibration=vibration.checked;this.save();if(this.vibration&&!this.sound)this.tick();};
+    sound.onchange=()=>{this.sound=sound.checked;if(!this.sound)this.stopFireRumble();else this.stopImpactVibration();this.save();void this.unlock();};
+    vibration.onchange=()=>{this.vibration=vibration.checked;if(!this.vibration)this.stopImpactVibration();this.save();if(this.vibration&&!this.sound)this.tick();};
     document.getElementById("allow-feedback")!.onclick=enable;
     document.getElementById("decline-feedback")!.onclick=()=>{sync();dialog.close();};
     document.getElementById("enable-feedback")!.onclick=()=>dialog.showModal();
     document.addEventListener("pointerup",()=>void this.unlock(),{passive:true});
     document.addEventListener("keydown",()=>void this.unlock());
-    document.addEventListener("visibilitychange", () => { if (document.hidden) this.stopFireRumble(); });
+    document.addEventListener("visibilitychange", () => { if (document.hidden) { this.stopFireRumble(); this.stopImpactVibration(); } });
     let saved=false;try{saved=localStorage.getItem(this.key)!==null;}catch{}
     if(!saved) dialog.showModal();
   }
