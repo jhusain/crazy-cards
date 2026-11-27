@@ -1,0 +1,9 @@
+{
+  "name": "@crazy-eights/cloudflare",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@crazy-eights/game-server": "*",
+    "@crazy-eights/protocol": "*"
+  }
+}

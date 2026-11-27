@@ -55,12 +55,31 @@ export class GameServer {
   private debug = false;
   private readonly automaticForcedTurns: boolean;
 
-  constructor(cpuSeat: Seat | null = 1, random: RandomIndex = randomIndex, autoplay = false, automaticForcedTurns = cpuSeat !== null) {
+  constructor(cpuSeat: Seat | null = 1, random: RandomIndex = randomIndex, autoplay = false, automaticForcedTurns = cpuSeat !== null,
+    savedMatch?: ReturnType<GameServer["saveMatch"]>) {
     this.cpuSeat = cpuSeat;
     this.automaticForcedTurns = automaticForcedTurns;
     this.random = random;
     this.autoplay = autoplay;
-    this.deal();
+    if (savedMatch) Object.assign(this, structuredClone(savedMatch));
+    else this.deal();
+  }
+
+  /** Private match state for the room's storage. Use view() for player-facing data. */
+  saveMatch() {
+    return structuredClone({
+      hands: this.hands, stock: this.stock, discard: this.discard,
+      lastPlay: this.lastPlay, lastPlaySize: this.lastPlaySize, lastPlaySeat: this.lastPlaySeat,
+      points: this.points, roundsWon: this.roundsWon, roundStartingPpc: this.roundStartingPpc,
+      pointsPerCard: this.pointsPerCard, matchResult: this.matchResult, revision: this.revision,
+      round: this.round, turn: this.turn, first: this.first, nextFirst: this.nextFirst,
+      drewThisTurn: this.drewThisTurn, passesWithoutProgress: this.passesWithoutProgress,
+      event: this.event, result: this.result, queued: this.queued,
+    });
+  }
+
+  static restoreMatch(state: ReturnType<GameServer["saveMatch"]>): GameServer {
+    return new GameServer(null, undefined, false, true, state);
   }
 
   setAutoplay(enabled: boolean): void {

@@ -3,15 +3,25 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "workspaces": ["apps/*", "packages/*"],
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
     "dev": "vite apps/web --host 0.0.0.0",
     "check": "tsc --noEmit",
     "test": "node --experimental-strip-types --test packages/game-server/test/*.test.ts apps/web/test/*.test.ts",
-    "build": "npm run check && vite build apps/web && node scripts/make-standalone.mjs"
+    "build": "npm run check && vite build apps/web && node scripts/make-standalone.mjs",
+    "check:cloudflare": "tsc --noEmit -p apps/cloudflare/tsconfig.json",
+    "dev:cloudflare": "wrangler dev --config wrangler.jsonc",
+    "deploy:cloudflare": "wrangler deploy --config wrangler.jsonc",
+    "test:cloudflare": "node --test apps/cloudflare/test/*.test.ts"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "5.20261127.1",
+    "miniflare": "5.20261127.0-beta",
     "typescript": "5.9.3",
-    "vite": "7.2.2"
+    "vite": "7.2.2",
+    "wrangler": "4.169.0"
   }
 }

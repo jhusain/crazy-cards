@@ -30,7 +30,7 @@ export function randomIndex(limit: number): number {
   const ceiling = range - range % limit;
   const value = new Uint32Array(1);
   do {
-    globalThis.crypto.getRandomValues(value);
+    crypto.getRandomValues(value);
   } while (value[0]! >= ceiling);
   return value[0]! % limit;
 }
