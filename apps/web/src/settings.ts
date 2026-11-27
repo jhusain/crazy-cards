@@ -1,6 +1,9 @@
+import type { HandSortingStrategy } from "./hand-sorting.ts";
+
 export const ANIMATION_SPEEDS = [.05, .1, .2, .3, .4, .5, .6, .7, .8, .9, 1, 1.1, 1.2, 1.3, 1.4, 1.5];
 
 export interface GameSettings {
+  handSortingStrategy: HandSortingStrategy;
   animationSpeed: number;
   aiPauseMs: number;
   dangerWarning: boolean;
@@ -22,6 +25,7 @@ export interface GameSettings {
 }
 
 export const DEFAULT_SETTINGS: GameSettings = {
+  handSortingStrategy: "default",
   animationSpeed: .7, aiPauseMs: 1500, dangerWarning: true, dangerThreshold: 1, targetCardWidth: 240, keepGroupsTogether: true,
   groupExceptWild: true, groupExceptTwo: true, autoPass: false, automaticDelayMs: 3000,
   autoPickup: false, autoSingle: false, autoSingleExcludeWild: false, autoSingleExcludeTwo: false,
@@ -31,6 +35,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
 export function readSettings(value: unknown): GameSettings {
   if (!value || typeof value !== "object") return { ...DEFAULT_SETTINGS };
   const {
+    handSortingStrategy,
     animationSpeed, aiPauseMs, dangerWarning, dangerThreshold, targetCardWidth, keepGroupsTogether,
     groupExceptWild, groupExceptTwo, autoPass,
     autoPickup, autoSingle, autoSingleExcludeWild, autoSingleExcludeTwo, autoSingleExcludeQueen, autoSingleIgnoreExclusionsWhenOpponentEmpty, autoSingleSkips, dimUnplayable,
@@ -38,6 +43,7 @@ export function readSettings(value: unknown): GameSettings {
   const saved = value as Partial<GameSettings> & { autoPassDelayMs?: number };
   const delay = saved.automaticDelayMs ?? saved.autoPassDelayMs;
   return {
+    handSortingStrategy: handSortingStrategy === "wizard" ? "wizard" : "default",
     animationSpeed: animationSpeed !== undefined && ANIMATION_SPEEDS.includes(animationSpeed)
       ? animationSpeed : DEFAULT_SETTINGS.animationSpeed,
     aiPauseMs: typeof aiPauseMs === "number" && aiPauseMs >= 1000 && aiPauseMs <= 3000 && aiPauseMs % 250 === 0

@@ -109,6 +109,13 @@
       <div class="dialog-heading"><h2 id="settings-title">Settings</h2><button class="quiet" data-close>Close</button></div>
       <div class="settings-controls">
         <div class="setting">
+          <label for="hand-sorting-strategy">Hand sorting strategy</label>
+          <select id="hand-sorting-strategy">
+            <option value="default" selected>default</option>
+            <option value="wizard">wizard</option>
+          </select>
+        </div>
+        <div class="setting">
           <label for="animation-speed">Animation speed</label>
           <output id="animation-speed-value" for="animation-speed">0.7×</output>
           <input id="animation-speed" type="range" min="0" max="15" step="1" value="7" aria-valuetext="0.7×">

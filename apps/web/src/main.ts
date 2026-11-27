@@ -452,6 +452,7 @@ function showTable(snapshot: TableView, queue: Card[], animate: boolean, speed =
   table.dataset.turnSide = snapshot.result ? "" : snapshot.turn === snapshot.seat ? "player" : "opponent";
   showDanger(snapshot);
   scene?.show({
+    handSortingStrategy: settings.handSortingStrategy,
     view: snapshot, staged: queue, back: deckBack, locked: autoplay || !inputReady(),
     keepGroupsTogether: settings.keepGroupsTogether,
     targetCardWidth: settings.targetCardWidth,
@@ -608,6 +609,17 @@ function setupSettings(): void {
   } catch {
     // The defaults also work when an offline browser disables storage.
   }
+  const handSorting = element<HTMLSelectElement>("hand-sorting-strategy");
+  handSorting.value = settings.handSortingStrategy;
+  handSorting.onchange = () => {
+    settings = readSettings({ ...settings, handSortingStrategy: handSorting.value });
+    try {
+      localStorage.setItem(settingsKey, JSON.stringify(settings));
+    } catch {
+      // Changes remain available for the current game.
+    }
+    if (view && !replaying && animationTimer === undefined) render(true);
+  };
   const animation = element<HTMLInputElement>("animation-speed");
   const pause = element<HTMLInputElement>("ai-pause");
   const danger = element<HTMLInputElement>("danger-warning");
@@ -654,6 +666,7 @@ function setupSettings(): void {
   };
   const updateSettings = () => {
     settings = readSettings({
+      handSortingStrategy: handSorting.value,
       animationSpeed: ANIMATION_SPEEDS[animation.valueAsNumber],
       aiPauseMs: pause.valueAsNumber * 1000,
       dangerWarning: danger.checked,

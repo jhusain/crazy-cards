@@ -7,6 +7,7 @@ import { arrivalProgress, slamDescent, slamFlight, slamPlayFlight, slamShadow, i
 import { chargePalette, chargePulseThresholds, powerCharge } from "./power-charge.ts";
 import { cardDropRegion, flickPlay, flickPlayableCards, isCardDrag, isUpwardFlick, queuedCardFlick, type FlickSettings } from "./card-gesture.ts";
 import { CardClicks } from "./card-click.ts";
+import { sortVisibleHand, type HandSortingStrategy } from "./hand-sorting.ts";
 import {
   ART_HEIGHT, ART_WIDTH, CARD_DEPTH, HAND_FADE_WIDTH, PILE_STEP, artHeight, planTableLayout, opponentPositions, playLandingPositions,
   committedFromPlay, collapsePlayPositions, automaticActionPosition, replayPosition, stockLayerCount, tableLayout, type CardPosition, type QueuedPileSlots,
@@ -40,6 +41,7 @@ class CardImage extends Phaser.GameObjects.Container {
   }
 }
 type BoardState = {
+  handSortingStrategy: HandSortingStrategy;
   flickSettings: FlickSettings;
   view: TableView; staged: Card[]; back: number; locked: boolean; targetCardWidth: number; keepGroupsTogether: boolean; dimUnplayable: boolean; replaying: boolean; playCapacity?: number;
 };
@@ -185,7 +187,10 @@ export class CardTable extends Phaser.Scene {
       const { view, staged = [], back = 0 } = this.state ?? {};
       const stagedIds = new Set(staged.map(card => card.id));
       const committedIds = new Set(view?.queuedCards);
-      const cards = (view?.hand ?? []).filter(card => !committedIds.has(card.id));
+      const cards = sortVisibleHand(
+        (view?.hand ?? []).filter(card => !committedIds.has(card.id)),
+        this.state?.handSortingStrategy ?? "default",
+      );
       const width = this.board.clientWidth;
       // Reserve the original slots while editing a play. Once committed, reserve
       // the final hand slots even when the server is still executing later groups.
@@ -300,6 +305,7 @@ export class CardTable extends Phaser.Scene {
       const stagingChanged = animate && !!previous &&
         (staged.length !== previous.staged.length || staged.some((card, index) => card.id !== previous.staged[index]?.id));
       const adjusting = stagingChanged || animate && (previous?.targetCardWidth !== targetCardWidth ||
+        previous?.handSortingStrategy !== this.state?.handSortingStrategy ||
         previous?.keepGroupsTogether !== this.state?.keepGroupsTogether ||
         previous?.dimUnplayable !== this.state?.dimUnplayable ||
         previous?.flickSettings.groupExceptWild !== this.state?.flickSettings.groupExceptWild ||

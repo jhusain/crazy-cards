@@ -309,6 +309,7 @@ dialog::backdrop { background: #100f14cf; }
 .setting { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px 10px; }
 .setting label { font-size: 14px; font-weight: 650; }
 .setting output { color: var(--gold); font-variant-numeric: tabular-nums; }
+.setting select { min-height: 44px; padding: 6px 12px; border: 1px solid var(--gold); border-radius: 8px; background: #332b30; color: var(--gold); font: inherit; }
 /* Only the thumb accepts pointer input; touching the track scrolls the settings. */
 .setting input[type="range"] {
   grid-column: 1 / -1;

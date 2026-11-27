@@ -20,6 +20,8 @@ Target width per card replaces the row-count setting: 40–1,000 logical pixels 
 
 The player's hand fades over ten CSS pixels before its clear 20-pixel right and bottom margins. The two fades multiply where they meet. A screen-space alpha mask applies to the composited Phaser canvas starting two pixels above the hand's top edge to cover its antialiased outline, revealing the actual felt in either turn color. Cards retain their global depths during flights. Layout reserves the fade width to keep every face and suit opaque, and hand touch targets stop before the fade.
 
+At the top of Settings, **Hand sorting strategy** offers **default** (the existing order) and **wizard**. Wizard visually orders ordinary cards from three through king, then aces, twos, the queen of spades, jacks, and eights. Equal-priority cards retain their existing order. This preference is saved on the device and affects only the displayed hand; rules, computer strategy, flick group order, and staged plays keep their existing behavior. The supplied examples do not define a consistent suit tie-breaker; examples 1, 15, and 30 also conflict with the otherwise consistent rank priorities, so wizard uses those priorities uniformly.
+
 ## Run
 
 Use Node.js 24 or later.
