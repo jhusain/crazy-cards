@@ -76,3 +76,55 @@ test("sorting setting defaults safely and survives saved-settings round trips", 
   const saved = readSettings({ ...DEFAULT_SETTINGS, handSortingStrategy: "wizard" });
   assert.deepEqual(readSettings(JSON.parse(JSON.stringify(saved))), saved);
 });
+
+const anupaFixtures = [
+  ["7H 10S 8C QS 8H AC 8D 2C", "8H 8C 8D QS 2C AC 10S 7H"],
+  ["10H 5S 7C 9S 3C 9H 6S 4H", "9S 6S 5S 7C 3C 10H 9H 4H"],
+  ["8D 5S 8C 3D 6C KD 2C 2H", "8C 8D 2H 2C 5S 6C KD 3D"],
+  ["KC AD 2S 3S 4H 6S QS 8D", "8D QS 2S AD 6S 3S KC 4H"],
+  ["5H 8D 2C AH 7C KD 9C 10H", "8D 2C AH 9C 7C 10H 5H KD"],
+  ["5H KC 5S AC KS 4C AS KH", "AC AS KS 5S KC 4C KH 5H"],
+  ["QS AS 9D 5C 7C 7S 9C KS", "QS AS KS 7S 9C 7C 5C 9D"],
+  ["AH 8D JS 10C 8C 7S 6H QD", "8C 8D JS AH 7S 10C 6H QD"],
+  ["6C 3D 5S 3S AC JH 6D 4D", "AC JH 5S 3S 6C 6D 4D 3D"],
+  ["9H 10S 4H 5C 9S KS QH 3D", "KS 10S 9S 5C QH 9H 4H 3D"],
+] as const;
+
+// Action-card ties have no consistent ordering in the examples. Compare their
+// categories while checking every ordinary card's exact identity and position.
+const anupaSequence = (cards: ReturnType<typeof parse>) => cards.map(card =>
+  card.special === "normal" ? card.id : card.special === "reverse" ? "skip" : card.special);
+
+for (const [index, [dealt, expected]] of anupaFixtures.entries()) {
+  test(`anupa matches example ${index + 1} apart from unspecified action-card tie order`, () => {
+    const hand = parse(dealt);
+    const before = hand.slice();
+    const sorted = sortVisibleHand(hand, "anupa");
+    assert.deepEqual(anupaSequence(sorted), anupaSequence(parse(expected)));
+    assert.deepEqual(hand, before);
+    assert.deepEqual(sorted.map(card => card.id).sort((a, b) => a - b), hand.map(card => card.id).sort((a, b) => a - b));
+    assert.deepEqual(sortVisibleHand(hand, "default"), before);
+    assert.deepEqual(sortVisibleHand(sorted, "anupa"), sorted);
+  });
+}
+
+test("anupa matches the supplied prefix of the unfinished eleventh example", () => {
+  const sorted = sortVisibleHand(parse("2H JC 6D 10C 4S JS 8D QS"), "anupa");
+  assert.deepEqual(anupaSequence(sorted.slice(0, 6)), anupaSequence(parse("8D QS 2H JS JC 4S")));
+  assert.deepEqual(sorted.slice(6), parse("10C 6D"));
+});
+
+test("anupa keeps tied action cards in existing order and preserves identities", () => {
+  const hand = Object.freeze(parse("AH 8D JS 2C 8C 2H QS"));
+  const sorted = sortVisibleHand(hand, "anupa");
+  assert.deepEqual(sorted, parse("8D 8C QS 2C 2H AH JS"));
+  assert.ok(sorted.every(card => hand.includes(card)));
+  assert.deepEqual(sortVisibleHand([], "anupa"), []);
+  assert.deepEqual(sortVisibleHand([hand[0]!], "anupa"), [hand[0]]);
+});
+
+test("anupa stays selected when saved settings are read again", () => {
+  const saved = readSettings({ ...DEFAULT_SETTINGS, handSortingStrategy: "anupa" });
+  assert.equal(saved.handSortingStrategy, "anupa");
+  assert.deepEqual(readSettings(JSON.parse(JSON.stringify(saved))), saved);
+});

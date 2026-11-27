@@ -44,7 +44,7 @@ export function readSettings(value: unknown): GameSettings {
   const saved = value as Partial<GameSettings> & { autoPassDelayMs?: number };
   const delay = saved.automaticDelayMs ?? saved.autoPassDelayMs;
   return {
-    handSortingStrategy: handSortingStrategy === "wizard" ? "wizard" : "default",
+    handSortingStrategy: handSortingStrategy === "wizard" || handSortingStrategy === "anupa" ? handSortingStrategy : "default",
     animationSpeed: animationSpeed !== undefined && ANIMATION_SPEEDS.includes(animationSpeed)
       ? animationSpeed : DEFAULT_SETTINGS.animationSpeed,
     aiPauseMs: typeof aiPauseMs === "number" && aiPauseMs >= 1000 && aiPauseMs <= 3000 && aiPauseMs % 250 === 0
