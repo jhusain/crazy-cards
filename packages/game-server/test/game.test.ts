@@ -402,6 +402,9 @@ test("queued eights can keep the preceding jack's suit, and recyclables retain t
   assert(server.stepAutomatic());
   assert.equal(server.view(0).activeSuit, "spades");
   assert.equal(command(server, 1, { type: "play", cards: [opponentCard] }).type, "state");
+  // Recycle directly rather than exceeding the hand limit to exhaust the stock.
+  server.setDebug(true);
+  assert.equal(command(server, 0, { type: "debug-reshuffle" }).type, "state");
   const seen = new Map<number, Suit>();
   for (let i = 0; i < 48; i++) {
     const seat = server.view(0).turn!;

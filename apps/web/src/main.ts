@@ -2,7 +2,7 @@ import Phaser from "phaser";
 import { CountdownFeedback, countdownBeat } from "./feedback.ts";
 import { setupInvitationLinks, setupPwa } from "./pwa.ts";
 import {
-  PLAY_SLOTS, canFollowInQueue, otherSeat, wildSuitOptions,
+  MAX_HAND_CARDS, PLAY_SLOTS, canFollowInQueue, otherSeat, wildSuitOptions,
   type Card, type Command, type Request, type Response, type Suit, type TableView,
 } from "@crazy-eights/protocol";
 import { DECKS, SUIT_SYMBOL, loadCardArt, suitLabel } from "./cards.ts";
@@ -37,6 +37,7 @@ const stockPile = element<HTMLButtonElement>("stock-pile");
 const discardPile = element<HTMLButtonElement>("discard-pile");
 const opponentHand = element<HTMLButtonElement>("opponent-hand");
 const autoplayCheck = element<HTMLInputElement>("debug-autoplay");
+let handLimitToastTimer: ReturnType<typeof setTimeout> | undefined;
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
 const suitDialog = element<HTMLDialogElement>("suit-dialog");
 suitDialog.addEventListener("close", () => {
@@ -98,7 +99,8 @@ let deckDraw: { requestId?: number; released: boolean; response?: Response; dest
 let pendingDrawDiscard = false;
 
 function beginDeckDraw(): boolean {
-  if (!view || !canUseStock() || view.drewThisTurn) return false;
+  if (!view || !canUseStock() || view.drewThisTurn &&
+      (view.hand.length < MAX_HAND_CARDS || view.event?.handLimitReached)) return false;
   deckDraw = { released: false };
   deckDraw.requestId = send({ type: "draw" });
   if (deckDraw.requestId === undefined) { deckDraw = undefined; return false; }
@@ -247,7 +249,7 @@ function drawOrPass(): void {
     clearPlay();
     return;
   }
-  send({ type: view.drewThisTurn ? "pass" : "draw" });
+  send({ type: view.drewThisTurn && (view.hand.length < MAX_HAND_CARDS || view.event?.handLimitReached) ? "pass" : "draw" });
 }
 
 function choosePlay(cards: Card[], direct = false): void {
@@ -586,6 +588,15 @@ function receive(response: Response): void {
   const playMessage = debugPlayMessage(view, response.view, debug);
   view = response.view;
   if (playMessage) showDebugToast(playMessage);
+  if (changed && !replaying && view.event?.handLimitReached && view.event.seat === view.seat) {
+    const toast = element("hand-limit-toast");
+    toast.textContent = `You cannot hold more than ${MAX_HAND_CARDS} cards. You must either play or pass. Draw again to pass.`;
+    toast.hidden = false;
+    clearTimeout(handLimitToastTimer);
+    handLimitToastTimer = setTimeout(() => { toast.hidden = true; }, 6000);
+  } else if (changed) {
+    element("hand-limit-toast").hidden = true;
+  }
   if (view.queuedCards.length) {
     staged = view.queuedCards.flatMap(id => view!.hand.filter(card => card.id === id));
   } else if (changed && view.event?.kind !== "shuffle" && (!view.event || view.event.kind !== "draw" || view.event.seat !== view.seat || view.result)) {

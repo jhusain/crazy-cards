@@ -18,6 +18,7 @@ export type RoundEnd = { winner: Seat | "tie"; points: number };
 export type MatchEnd = RoundEnd & { roundsWon: [number, number] };
 export const MATCH_ROUNDS = 3;
 export const PLAY_SLOTS = 12;
+export const MAX_HAND_CARDS = 20;
 export type PlayMove = { type: "play"; cards: number[]; suit?: Suit };
 export type Move = PlayMove | { type: "draw" } | { type: "pass" };
 export type Command = Move | { type: "play-queue"; cards: number[]; suit?: Suit }
@@ -45,6 +46,7 @@ export interface TurnEvent {
   /** Score of this actual play, calculated before cards and pickup penalties change hands. */
   aggressiveness?: number;
   drawCount?: number;
+  handLimitReached?: boolean;
   drawnCards?: number[];
   skips?: boolean;
   reshuffles?: DeckReshuffle[];

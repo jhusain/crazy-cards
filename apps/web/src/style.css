@@ -442,3 +442,9 @@ dialog p { font-size: 14px; line-height: 1.45; }
 #network-link { display: block; width: 100%; margin: 12px 0; padding: 12px; border: 1px solid #ceb078; border-radius: 6px; background: #151217; color: #ffefd2; font: inherit; font-size: 14px; }
 .network-actions { display: flex; gap: 12px; flex-wrap: wrap; }
 #network-dialog .dialog-heading h2 { font-size: 30px; }
+
+.hand-limit-toast {
+  position: fixed; right: max(16px, env(safe-area-inset-right));
+  bottom: max(24px, env(safe-area-inset-bottom)); left: auto; transform: none;
+  max-width: min(360px, calc(100vw - 32px)); white-space: normal;
+}

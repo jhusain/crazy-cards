@@ -1,5 +1,5 @@
 import {
-  MATCH_ROUNDS, PLAY_SLOTS, SUITS, activeSuit, canFollowInQueue, canLead, otherSeat, skipsOpponent, wildSuitOptions,
+  MATCH_ROUNDS, MAX_HAND_CARDS, PLAY_SLOTS, SUITS, activeSuit, canFollowInQueue, canLead, otherSeat, skipsOpponent, wildSuitOptions,
   type Card, type DeckReshuffle, type Command, type Move, type PlayMove, type PlayedCard,
   type Request, type Response, type RoundEnd, type MatchEnd, type Seat, type TableView, type TurnEvent,
 } from "@crazy-eights/protocol";
@@ -300,7 +300,7 @@ export class GameServer {
   private drawCards(seat: Seat, count: number): { drawnCards: number[]; reshuffles: DeckReshuffle[] } {
     const drawn: number[] = [];
     const reshuffles: DeckReshuffle[] = [];
-    while (drawn.length < count) {
+    while (drawn.length < count && this.hands[seat].length < MAX_HAND_CARDS) {
       if (this.stock.length === 0 && this.discard.length > 0) {
         reshuffles.push(this.recycleDiscard(drawn.length));
       }
@@ -317,6 +317,17 @@ export class GameServer {
     if (move.type === "play") {
       this.play(seat, move.cards, move.suit);
     } else if (move.type === "draw") {
+      if (this.hands[seat].length >= MAX_HAND_CARDS) {
+        if (this.event?.handLimitReached && this.event.seat === seat) {
+          this.move(seat, { type: "pass" });
+          return;
+        }
+        // A blocked draw gives the player the same play-or-pass choice as a draw.
+        this.drewThisTurn = true;
+        this.event = { seat, kind: "draw", drawCount: 0, drawnCards: [], handLimitReached: true };
+        this.revision++;
+        return;
+      }
       if (this.drewThisTurn) throw new Error("You’ve already drawn this turn. Play or pass.");
       const { drawnCards, reshuffles } = this.drawCards(seat, 1);
       this.drewThisTurn = true;
@@ -327,8 +338,9 @@ export class GameServer {
       this.passesWithoutProgress++;
       this.event = { seat, kind: "pass" };
       this.advance(otherSeat(seat));
-      if (!this.result && this.passesWithoutProgress >= 2 && this.stock.length === 0 && this.discard.length === 0 &&
-        this.hands.every(hand => hand.every(card => !canLead(card, this.top)))) {
+      if (!this.result && this.passesWithoutProgress >= 2 && this.hands.every(hand =>
+          (hand.length >= MAX_HAND_CARDS || this.stock.length === 0 && this.discard.length === 0) &&
+          hand.every(card => !canLead(card, this.top)))) {
         this.finish("tie", 0, this.first);
       }
     }

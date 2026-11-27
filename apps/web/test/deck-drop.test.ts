@@ -24,6 +24,7 @@ function setup(legal = true) {
     view: original, staged: [], playCapacity: 0, deckDraw: { requestId: 7, released: false }, pendingDrawDiscard: false,
     busy: 7, pendingCommand: { type: "draw" }, debug: false, replaying: false, canceledAutomaticRevision: undefined,
     animationTimer: undefined, autoplay: false, settings: { animationSpeed: 1 }, reducedMotion: { matches: false },
+    element: () => ({ hidden: true }),
     message: undefined, suitDialog: { open: false }, eligibleDrawDrop,
     scene: { revealStockDraw: (card: Card) => revealed.push(card), setLocked() {} },
     automaticActions: { record() {} }, history: { record() {} }, cancelAutomaticAction() {}, debugPlayMessage() {},
