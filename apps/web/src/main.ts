@@ -6,7 +6,7 @@ import {
   type Card, type Command, type Request, type Response, type Suit, type TableView,
 } from "@crazy-eights/protocol";
 import { DECKS, SUIT_SYMBOL, loadCardArt, suitLabel } from "./cards.ts";
-import { flickPlay, flickTopSuitOptions, orderFlickGroup } from "./card-gesture.ts";
+import { flickPlay } from "./card-gesture.ts";
 import { AutomaticActions, type AutomaticAction } from "./automatic-actions.ts";
 import { OpponentReplay } from "./opponent-replay.ts";
 import { roundProgress } from "./round-progress.ts";
@@ -39,6 +39,9 @@ const opponentHand = element<HTMLButtonElement>("opponent-hand");
 const autoplayCheck = element<HTMLInputElement>("debug-autoplay");
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
 const suitDialog = element<HTMLDialogElement>("suit-dialog");
+suitDialog.addEventListener("close", () => {
+  if (busy === undefined) scene?.returnDraggedCards();
+});
 const roundDialog = element<HTMLDialogElement>("round-dialog");
 const rulesDialog = element<HTMLDialogElement>("rules-dialog");
 const settingsDialog = element<HTMLDialogElement>("settings-dialog");
@@ -174,10 +177,7 @@ function flickCard(id: number): void {
     playCapacity = Math.max(playCapacity, view.visibleDiscard.length + staged.length);
     render(true);
   };
-  const suits = flickTopSuitOptions(play, settings);
-  if (suits.length && (staged.length || view.opponentCount > 0)) {
-    chooseSuit(suits, suit => commit(orderFlickGroup(play, suit)), "Choose suit");
-  } else commit(play);
+  commit(play);
 }
 
 function clearPlay(): void {
@@ -557,7 +557,6 @@ function setupSettings(): void {
   const groupTwo = element<HTMLInputElement>("group-except-two");
   const automaticDelay = element<HTMLInputElement>("automatic-delay");
   const checks = {
-    flickSelectsTopCard: "flick-selects-top-card",
     autoPass: "auto-pass", autoPickup: "auto-pickup", autoSingle: "auto-single",
     autoSingleExcludeWild: "auto-single-exclude-wild", autoSingleExcludeTwo: "auto-single-exclude-two",
     autoSingleExcludeQueen: "auto-single-exclude-queen",

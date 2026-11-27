@@ -89,7 +89,7 @@
       <div class="dialog-heading"><h2 id="rules-title">House rules</h2><button class="quiet" data-close>Close</button></div>
       <ul class="rules-list">
         <li>Add <b>?debug=true</b> to the URL, or double-tap the opponent’s cards, to toggle debug mode. In debug mode, tap an empty discard play to let the AI take your turn, or enable <b>Autoplay</b> in the menu to control your seat automatically. Opening the menu pauses autoplay.</li>
-        <li>Tap a card to add it to your play. Flick a matching card up to play its rank group with that card on the bottom, choosing the top suit when needed. Enable “Flick selects top card instead of bottom card” to select the top card instead; in that mode, flicking the only matching card plays it individually. In Settings you can stage a flicked eight or two when others of the same rank remain in your hand. Tap the <b>discard pile</b> or swipe any queued card up or left to play the queue. Flick any queued card down to clear the queue.</li>
+        <li>Tap a card to add it to your play. Flick a card up to play its rank group with that card on top; flicking the only matching card plays it individually. Dragged cards follow your finger, then fly from the release point when you flick. In Settings you can stage a flicked eight or two when others of the same rank remain in your hand. Tap the <b>discard pile</b> or swipe any queued card up or left to play the queue. Flick any queued card down to clear the queue.</li>
         <li><b>Eights</b> are wild. A single eight must call a different suit. With multiple eights, the last eight can call any suit.</li>
         <li>Your queued play sits to the right of the last play, separated by a gap. Tap the last play or swipe a queued card up or left to play it. Tap a queued card to return it to your hand; flick down to clear the queue.</li>
         <li><b>Aces and jacks</b> skip the opponent. <b>Twos</b> make them draw two per card in the stack, and the <b>queen of spades</b> makes them draw five. A special effect can be covered by an ordinary card in the combo. After an ace or jack, you can queue another play that matches the suit of the last card.</li>
@@ -139,7 +139,6 @@
         </div>
         <fieldset class="flick-settings">
           <legend>Flick settings</legend>
-          <label class="setting-check"><input id="flick-selects-top-card" type="checkbox"> Flick selects top card instead of bottom card</label>
           <label class="setting-check"><input id="group-except-wild" type="checkbox" checked> Flicks stage wild cards if there are others in the hand</label>
           <label class="setting-check"><input id="group-except-two" type="checkbox" checked> Flicks stage 2's if there are others in the hand</label>
         </fieldset>

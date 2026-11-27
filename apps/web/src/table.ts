@@ -5,7 +5,7 @@ import { shuffleFrame } from "./shuffle-animation.ts";
 import { wildReel, wildReelSounds } from "./wild-reel.ts";
 import { arrivalProgress, slamDescent, slamFlight, slamPlayFlight, slamShadow, impactEnvelope, scatteredCard, tableShock } from "./play-impact.ts";
 import { chargePalette, chargePulseThresholds, powerCharge } from "./power-charge.ts";
-import { flickPlayableCards, isUpwardFlick, queuedCardFlick, type FlickSettings } from "./card-gesture.ts";
+import { flickPlay, flickPlayableCards, isCardDrag, isUpwardFlick, queuedCardFlick, type FlickSettings } from "./card-gesture.ts";
 import {
   ART_HEIGHT, ART_WIDTH, CARD_DEPTH, HAND_FADE_WIDTH, PILE_STEP, artHeight, planTableLayout, opponentPositions, playLandingPositions,
   committedFromPlay, collapsePlayPositions, automaticActionPosition, replayPosition, stockLayerCount, tableLayout, type CardPosition, type QueuedPileSlots,
@@ -74,6 +74,10 @@ function between(from: CardPosition, to: CardPosition, t: number, lift = 0): Car
 export class CardTable extends Phaser.Scene {
   private art!: CardTextures;
   private state?: BoardState;
+  private cardImages = new Map<number, CardImage>();
+  private dragged = new Map<number, { image: CardImage; home: CardPosition; depth: number }>();
+  private dragReturn?: Phaser.Tweens.Tween;
+  private cancelPointer?: () => void;
   private priorCardPositions = new Map<number, CardPosition>();
   private priorCardShades = new Map<number, number>();
   private priorHandDepths = new Map<number, number>();
@@ -154,6 +158,11 @@ export class CardTable extends Phaser.Scene {
       this.controls.stopFireRumble?.();
       this.controls.stopImpactVibration?.();
       this.controls.stopPowerSounds?.();
+      this.cancelPointer?.();
+      this.cancelPointer = undefined;
+      this.dragged.clear();
+      this.dragReturn = undefined;
+      this.cardImages.clear();
       this.tweens.killAll();
       this.board.style.removeProperty("transform");
       this.impactCards = [];
@@ -278,7 +287,6 @@ export class CardTable extends Phaser.Scene {
       const adjusting = stagingChanged || animate && (previous?.targetCardWidth !== targetCardWidth ||
         previous?.keepGroupsTogether !== this.state?.keepGroupsTogether ||
         previous?.dimUnplayable !== this.state?.dimUnplayable ||
-        previous?.flickSettings.flickSelectsTopCard !== this.state?.flickSettings.flickSelectsTopCard ||
         previous?.flickSettings.groupExceptWild !== this.state?.flickSettings.groupExceptWild ||
         previous?.flickSettings.groupExceptTwo !== this.state?.flickSettings.groupExceptTwo);
       const initialDeal = motion && !view.event;
@@ -318,6 +326,7 @@ export class CardTable extends Phaser.Scene {
       for (const { card, position, depth } of stagedTargets) {
         const from = priorPositions.get(card.id);
         const image = this.drawImage(this.art.face(card), position, depth);
+        this.cardImages.set(card.id, image);
         const button = buttons.get(card.id)!;
         this.priorCardPositions.set(card.id, position);
         if (registerReflow && from) {
@@ -806,6 +815,7 @@ export class CardTable extends Phaser.Scene {
       const initialDepth = (draw || reflow) && drawIndex === undefined && from
         ? previousDepths.get(card.id) ?? depth : depth;
       const image = this.drawImage(this.art.face(card), position, initialDepth);
+      this.cardImages.set(card.id, image);
       if (this.impact && view.event?.seat !== view.seat && drawIndex === undefined) {
         this.impactCards.push({ image, home: from ?? position, id: card.id });
       }
@@ -917,28 +927,98 @@ export class CardTable extends Phaser.Scene {
     return new Map(targets.map(button => [Number(button.dataset.cardId), button]));
   }
 
+  // Keep live images and cached positions together so the next paint starts at release.
+  private moveDragged(dx: number, dy: number): void {
+    for (const [id, { image, home }] of this.dragged) {
+      const position = { ...home, x: home.x + dx, y: home.y + dy };
+      this.placeImage(image, position);
+      this.priorCardPositions.set(id, position);
+    }
+  }
+
+  returnDraggedCards(immediate = false): void {
+    this.dragReturn?.stop();
+    this.dragReturn = undefined;
+    if (!this.dragged.size) return;
+    const cards = [...this.dragged].map(([id, item]) => ({ id, ...item, from: this.priorCardPositions.get(id)! }));
+    const move = (t: number) => {
+      for (const { id, image, home, from, depth } of cards) {
+        const position = t === 1 ? home : between(from, home, t);
+        this.placeImage(image, position);
+        this.priorCardPositions.set(id, position);
+        if (t === 1) image.setDepth(depth);
+      }
+    };
+    const done = () => { this.dragged.clear(); this.dragReturn = undefined; };
+    if (immediate) { move(1); done(); }
+    else this.dragReturn = this.tween(140, move, done);
+  }
+
+  private beginCardDrag(id: number, staged: boolean): void {
+    const state = this.state;
+    if (!state) return;
+    const remaining = state.view.hand.filter(card => !state.staged.some(queued => queued.id === card.id));
+    const last = state.staged.at(-1);
+    const legal = last ? remaining.filter(card => canFollowInQueue(card, last)).map(card => card.id) : state.view.legalLeads;
+    const card = remaining.find(card => card.id === id);
+    const group = staged ? state.staged : card ? flickPlay(card, remaining, legal, state.flickSettings) ?? [card] : [];
+    for (const [index, card] of group.entries()) {
+      const image = this.cardImages.get(card.id), position = this.priorCardPositions.get(card.id);
+      if (!image || !position) continue;
+      this.dragged.set(card.id, { image, home: { ...position }, depth: image.depth });
+      image.setDepth(CARD_DEPTH.staging + PLAY_SLOTS * 2 + index);
+    }
+  }
+
   private bindCardGesture(button: HTMLButtonElement, id: number, staged: boolean): void {
-    let start: { x: number; y: number; time: number; pointer: number } | undefined;
+    let start: { x: number; y: number; time: number; pointer: number; dragging: boolean } | undefined;
     let suppressClick = false;
+    const cancel = () => {
+      start = undefined;
+      suppressClick = true;
+      this.cancelPointer = undefined;
+      this.returnDraggedCards();
+    };
     button.onpointerdown = event => {
-      if (!event.isPrimary || event.button !== 0) return;
+      if (!event.isPrimary || event.button !== 0 || !this.state || !this.cardsEnabled(this.state.view)) return;
+      this.cancelPointer?.();
+      this.returnDraggedCards(true);
       suppressClick = false;
-      start = { x: event.clientX, y: event.clientY, time: event.timeStamp, pointer: event.pointerId };
+      start = { x: event.clientX, y: event.clientY, time: event.timeStamp, pointer: event.pointerId, dragging: false };
+      this.cancelPointer = cancel;
       if (event.isTrusted) button.setPointerCapture(event.pointerId);
     };
-    button.onpointercancel = () => { start = undefined; suppressClick = true; };
+    const track = (event: PointerEvent) => {
+      if (!start || start.pointer !== event.pointerId) return;
+      const dx = event.clientX - start.x, dy = event.clientY - start.y;
+      if (!start.dragging && isCardDrag(dx, dy, staged)) {
+        start.dragging = true;
+        suppressClick = true;
+        this.beginCardDrag(id, staged);
+      }
+      if (start.dragging) {
+        const bounds = this.board.getBoundingClientRect();
+        this.moveDragged(dx * this.board.clientWidth / bounds.width, dy * this.board.clientHeight / bounds.height);
+      }
+    };
+    button.onpointermove = track;
+    button.onpointercancel = event => { if (start?.pointer === event.pointerId) cancel(); };
+    button.onlostpointercapture = event => { if (start?.pointer === event.pointerId) cancel(); };
     button.onpointerup = event => {
       if (!start || start.pointer !== event.pointerId) return;
+      track(event);
       const dx = event.clientX - start.x;
       const dy = event.clientY - start.y;
       const elapsed = event.timeStamp - start.time;
       const gesture = staged ? queuedCardFlick(dx, dy, elapsed) : undefined;
       const flick = !staged && isUpwardFlick(dx, dy, elapsed);
+      suppressClick = start.dragging || Math.hypot(dx, dy) > 12;
       start = undefined;
-      suppressClick = Math.hypot(dx, dy) > 12;
+      this.cancelPointer = undefined;
       if (gesture === "play") this.controls.playQueue();
       else if (gesture === "clear") this.controls.clearPlay();
       else if (flick) this.controls.flickCard(id);
+      else this.returnDraggedCards();
     };
     button.onclick = event => {
       if (!suppressClick || event.detail === 0) this.controls.tapCard(id);
@@ -971,6 +1051,8 @@ export class CardTable extends Phaser.Scene {
   }
 
   private moveCard(image: CardImage, from: CardPosition, to: CardPosition, t: number, id?: number, lift = 0): CardPosition {
+    // Older staging/reflow tweens must not pull a held group away from the pointer.
+    if (id !== undefined && this.dragged.has(id)) return this.priorCardPositions.get(id)!;
     const position = t === 1 ? to : between(from, to, t, lift);
     this.placeImage(image, position);
     if (id !== undefined) this.priorCardPositions.set(id, position);
@@ -986,9 +1068,9 @@ export class CardTable extends Phaser.Scene {
     });
   }
 
-  private tween(duration: number, frame: (t: number) => void, done?: () => void, delay = 0, easing = "Sine.InOut"): void {
+  private tween(duration: number, frame: (t: number) => void, done?: () => void, delay = 0, easing = "Sine.InOut"): Phaser.Tweens.Tween {
     const progress = { t: 0 };
-    this.tweens.add({
+    return this.tweens.add({
       targets: progress, t: 1, duration: duration / this.speed, delay: delay / this.speed, ease: easing,
       onUpdate: () => frame(progress.t),
       onComplete: () => { frame(1); done?.(); },
