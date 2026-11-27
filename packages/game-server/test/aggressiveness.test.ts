@@ -51,44 +51,44 @@ test("twos count actual trailing discards, even beyond the visible last play", (
   assert.equal(play(interrupted, [two]), 1);
 });
 
-test("repeated skip ranks score 1,2,2,2 then 2,3,3,3; final twos score nine", () => {
+test("repeated jacks and aces score zero without increasing the final twos", () => {
   const jacks = ["clubs", "hearts", "spades", "diamonds"].map(suit => card(11, suit as Suit));
   const aces = ["diamonds", "clubs", "spades", "hearts"].map(suit => card(1, suit as Suit));
   const twos = ["hearts", "clubs", "spades", "diamonds"].map(suit => card(2, suit as Suit));
   const server = position([...jacks, ...aces, ...twos], []);
-  assert.deepEqual([...jacks, ...aces].map(card => play(server, [card])), [1, 2, 2, 2, 2, 3, 3, 3]);
-  assert.equal(play(server, twos), 9);
+  assert.deepEqual([...jacks, ...aces].map(card => play(server, [card])), [0, 0, 0, 0, 0, 0, 0, 0]);
+  assert.equal(play(server, twos), 7);
 });
 
-test("staging a jack quadruple, ace quadruple and two quadruple emits scores 2,3,9", () => {
+test("staging a jack quadruple, ace quadruple and two quadruple emits scores 0,0,7", () => {
   const jacks = quad(11), aces = quad(1).reverse(), twos = quad(2);
   const server = position([...jacks, ...aces, ...twos], [], card(3, "hearts"));
   const first = send(server, 0, { type: "play-queue", cards: [...jacks, ...aces, ...twos].map(card => card.id) });
-  assert.equal(first.event?.aggressiveness, 2);
+  assert.equal(first.event?.aggressiveness, 0);
   assert(server.stepAutomatic());
-  assert.equal(server.view(0).event?.aggressiveness, 3);
+  assert.equal(server.view(0).event?.aggressiveness, 0);
   assert(server.stepAutomatic());
-  assert.equal(server.view(0).event?.aggressiveness, 9);
+  assert.equal(server.view(0).event?.aggressiveness, 7);
 });
 
-test("drawing resets skip carryover, and intrinsic quadruple points do not carry", () => {
+test("jacks add no aggression to twos, with or without an intervening draw", () => {
   const jacks = quad(11), two = card(2, "spades");
   const server = position([...jacks, two, card(5, "clubs")], [card(7, "hearts")], card(3, "hearts"));
-  assert.equal(play(server, jacks), 2);
+  assert.equal(play(server, jacks), 0);
   send(server, 0, { type: "draw" });
   assert.equal(play(server, [two]), 1);
   const uninterrupted = position([...jacks, two, card(5, "clubs")], [card(7, "spades")], card(3, "hearts"));
-  assert.equal(play(uninterrupted, jacks), 2);
-  assert.equal(play(uninterrupted, [two]), 2);
+  assert.equal(play(uninterrupted, jacks), 0);
+  assert.equal(play(uninterrupted, [two]), 1);
   assert.equal(play(uninterrupted, [card(7, "spades")], 1), 0);
 });
 
-test("restoring the previous suit after skips adds no aggression beyond skip carryover", () => {
+test("restoring the previous suit after jacks adds no aggression", () => {
   const server = position([card(3, "hearts"), card(5, "spades")],
     [card(11, "hearts"), card(11, "diamonds"), card(7, "diamonds"), card(7, "clubs"), card(5, "hearts")]);
   assert.equal(play(server, [card(3, "hearts")]), 0);
-  assert.equal(play(server, [card(11, "hearts"), card(11, "diamonds")], 1), 1);
-  assert.equal(play(server, [card(7, "diamonds"), card(7, "clubs")], 1), 1);
+  assert.equal(play(server, [card(11, "hearts"), card(11, "diamonds")], 1), 0);
+  assert.equal(play(server, [card(7, "diamonds"), card(7, "clubs")], 1), 0);
 });
 
 test("restoring a suit adds no bonus with an empty hand or after drawing", () => {
@@ -96,7 +96,7 @@ test("restoring a suit adds no bonus with an empty hand or after drawing", () =>
   const empty = position([three], [card(11, "hearts"), card(7, "hearts"), restore, card(5, "hearts")]);
   play(empty, [three]);
   play(empty, [card(11, "hearts")], 1);
-  assert.equal(play(empty, [card(7, "hearts"), restore], 1), 1);
+  assert.equal(play(empty, [card(7, "hearts"), restore], 1), 0);
   const drawn = position([three, card(5, "spades")], [card(11, "hearts"), card(7, "hearts"), restore, card(5, "hearts")]);
   play(drawn, [three]);
   play(drawn, [card(11, "hearts")], 1);
@@ -104,13 +104,13 @@ test("restoring a suit adds no bonus with an empty hand or after drawing", () =>
   assert.equal(play(drawn, [card(7, "hearts"), restore], 1), 0);
 });
 
-test("a wild restoring the previous suit adds no bonus; a new round clears skip carryover", () => {
+test("a wild restoring the previous suit adds no bonus; a new round starts without aggression", () => {
   const wild = card(8, "spades");
   const server = position([card(3, "hearts"), card(5, "spades")], [wild, card(5, "hearts")]);
   play(server, [card(3, "hearts")]);
   assert.equal(play(server, [wild], 1, "clubs"), 0);
   const ending = position([card(11, "clubs")], []);
-  assert.equal(play(ending, [card(11, "clubs")]), 2);
+  assert.equal(play(ending, [card(11, "clubs")]), 1);
   send(ending, 0, { type: "next-round" });
   Object.assign(ending, { hands: [[card(7, "clubs"), card(5, "clubs")], [card(3, "hearts")]], turn: 0,
     lastPlay: [card(9, "clubs")] });
@@ -126,7 +126,7 @@ test("the aggressiveness test is debug-only and denial leaves the table untouche
   assert.deepEqual(server.view(0), before);
 });
 
-test("the debug example starts with the opponent's final card and reaches scores 2,3,9", () => {
+test("the debug example starts with the opponent's final card and reaches scores 0,0,7", () => {
   const server = new GameServer(1, () => 0, true);
   server.setDebug(true);
   const initial = send(server, 0, { type: "debug-aggressiveness" });
@@ -148,12 +148,12 @@ test("the debug example starts with the opponent's final card and reaches scores
   const jacks = ["clubs", "hearts", "spades", "diamonds"].map(suit => card(11, suit as Suit));
   const aces = ["diamonds", "hearts", "spades", "clubs"].map(suit => card(1, suit as Suit));
   const twos = ["clubs", "diamonds", "spades", "hearts"].map(suit => card(2, suit as Suit));
-  assert.equal(send(server, 0, { type: "play-queue", cards: [...jacks, ...aces, ...twos].map(card => card.id) }).event?.aggressiveness, 2);
+  assert.equal(send(server, 0, { type: "play-queue", cards: [...jacks, ...aces, ...twos].map(card => card.id) }).event?.aggressiveness, 0);
   assert(server.stepAutomatic());
-  assert.equal(server.view(0).event?.aggressiveness, 3);
+  assert.equal(server.view(0).event?.aggressiveness, 0);
   assert(server.stepAutomatic());
   const final = server.view(0);
-  assert.equal(final.event?.aggressiveness, 9);
+  assert.equal(final.event?.aggressiveness, 7);
   assert.equal(final.visibleDiscard.at(-1)?.id, card(2, "hearts").id);
   assert.equal(final.hand.length, 0);
   assert.equal(final.event?.penalty?.count, 8);
@@ -210,11 +210,11 @@ test("the eight-card debug test keeps the same player hand and opening, with car
   const jacks = ["clubs", "hearts", "spades", "diamonds"].map(suit => card(11, suit as Suit));
   const aces = ["diamonds", "hearts", "spades", "clubs"].map(suit => card(1, suit as Suit));
   const twos = ["clubs", "diamonds", "spades", "hearts"].map(suit => card(2, suit as Suit));
-  assert.equal(send(server, 0, { type: "play-queue", cards: [...jacks, ...aces, ...twos].map(card => card.id) }).event?.aggressiveness, 2);
+  assert.equal(send(server, 0, { type: "play-queue", cards: [...jacks, ...aces, ...twos].map(card => card.id) }).event?.aggressiveness, 0);
   assert(server.stepAutomatic());
-  assert.equal(server.view(0).event?.aggressiveness, 3);
+  assert.equal(server.view(0).event?.aggressiveness, 0);
   assert(server.stepAutomatic());
-  assert.equal(server.view(0).event?.aggressiveness, 8);
+  assert.equal(server.view(0).event?.aggressiveness, 6);
   assert.equal(server.view(0).opponentCount, 15);
 });
 
@@ -229,5 +229,13 @@ test("eight-card setup remains debug-only and invalid hand sizes are rejected", 
   for (const count of [0, 2, 7, 9, "8", null]) {
     assert.equal(request(count).type, "error");
     assert.deepEqual(server.view(0), before);
+  }
+});
+
+ test("jacks and aces have zero intrinsic aggression for both seats, including quadruples", () => {
+  for (const seat of [0, 1] as const) for (const rank of [1, 11]) {
+    const cards = quad(rank), extra = card(5, "clubs");
+    assert.equal(play(position([...cards, extra], [], card(3, "hearts"), seat), cards, seat), 0);
+    assert.equal(play(position(cards, [], card(3, "hearts"), seat), cards, seat), 1); // Going out only.
   }
 });

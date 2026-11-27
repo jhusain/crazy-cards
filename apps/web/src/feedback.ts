@@ -1,12 +1,22 @@
 import { impactVibration, slamIntensity } from "./play-impact.ts";
 
-// Sound is opt-in and unlocked by a trusted tap; gameplay vibration is automatic.
+// Sound and vibration are opt-in; audio is unlocked by a trusted tap.
 export class CountdownFeedback {
   private context?: AudioContext;
   private fireSource?: AudioBufferSourceNode;
   private impactVibrating = false;
   private powerSources = new Set<AudioScheduledSourceNode>();
   sound = false;
+  private vibrationEnabled = false;
+  get vibration(): boolean { return this.vibrationEnabled; }
+  set vibration(enabled: boolean) {
+    if (this.vibrationEnabled && !enabled) {
+      // Cancel any current buzz, including a countdown tick or explicit test.
+      this.impactVibrating = false;
+      try { navigator.vibrate?.(0); } catch { /* Unsupported or denied by the browser. */ }
+    }
+    this.vibrationEnabled = enabled;
+  }
   private readonly key = "crazy-eights-feedback";
 
   private readonly reportVibration: (message: string) => void;
@@ -16,10 +26,11 @@ export class CountdownFeedback {
     try {
       const saved = JSON.parse(localStorage.getItem(this.key) ?? "null");
       this.sound = saved?.sound === true;
+      this.vibration = saved?.vibration === true;
     } catch { /* Defaults remain silent. */ }
   }
   save(): void {
-    try { localStorage.setItem(this.key,JSON.stringify({sound:this.sound})); } catch { /* Session preferences still work. */ }
+    try { localStorage.setItem(this.key,JSON.stringify({sound:this.sound,vibration:this.vibration})); } catch { /* Session preferences still work. */ }
   }
   async unlock(): Promise<void> {
     if (!this.sound) return;
@@ -57,6 +68,7 @@ export class CountdownFeedback {
     this.requestVibration(25, "Countdown vibration");
   }
   private requestVibration(pattern: number | number[], label: string): { accepted: boolean; message: string } {
+    if (!this.vibration) return { accepted: false, message: "Vibration is off. Enable it in Settings." };
     let accepted = false;
     let message: string;
     try {
@@ -257,10 +269,13 @@ export class CountdownFeedback {
 
   setup(): void {
     const sound=document.getElementById("sound-enabled") as HTMLInputElement;
+    const vibration=document.getElementById("vibration-enabled") as HTMLInputElement;
     const dialog=document.getElementById("feedback-dialog") as HTMLDialogElement;
     const sync=()=>{sound.checked=this.sound;this.save();};
     const enable=()=>{this.sound=true;sync();void this.unlock().then(()=>this.tick());dialog.close();};
     sound.checked=this.sound;
+    vibration.checked=this.vibration;
+    vibration.onchange=()=>{this.vibration=vibration.checked;this.save();};
     sound.onchange=()=>{this.sound=sound.checked;if(!this.sound){this.stopFireRumble();this.stopPowerSounds();}this.save();void this.unlock();};
     document.getElementById("allow-feedback")!.onclick=enable;
     document.getElementById("decline-feedback")!.onclick=()=>{sync();dialog.close();};
