@@ -148,7 +148,8 @@ function validQueue(cards: Card[], snapshot: TableView): Card[] {
 
 function tapCard(id: number): void {
   if (!view || !canUseStock()) return;
-  cancelAutomaticAction();
+  if (!settings.autoStaged) cancelAutomaticAction();
+  const before = staged.map(card => card.id).join(",");
   const index = staged.findIndex(card => card.id === id);
   message = undefined;
   if (index !== -1) {
@@ -169,7 +170,15 @@ function tapCard(id: number): void {
     }
   }
   playCapacity = staged.length ? Math.max(playCapacity, view.visibleDiscard.length + staged.length) : 0;
+  if (before !== staged.map(card => card.id).join(",")) stagingChanged();
+  else render(true);
+}
+
+function stagingChanged(): void {
+  cancelAutomaticAction(!settings.autoStaged);
+  if (settings.autoStaged) canceledAutomaticRevision = undefined;
   render(true);
+  startAutomaticAction();
 }
 
 function flickCard(id: number): void {
@@ -189,7 +198,7 @@ function flickCard(id: number): void {
     cancelAutomaticAction();
     staged = combined;
     playCapacity = Math.max(playCapacity, view.visibleDiscard.length + staged.length);
-    render(true);
+    stagingChanged();
   };
   commit(play);
 }
@@ -209,7 +218,7 @@ function dropCards(ids: number[], destination: "discard" | "play"): void {
   else {
     staged = combined;
     playCapacity = Math.max(playCapacity, view.visibleDiscard.length + staged.length);
-    render(true);
+    stagingChanged();
   }
 }
 
@@ -308,8 +317,10 @@ function automaticCandidate(): AutomaticAction | undefined {
   const planned = automaticSession?.action.type === "play" ? automaticSession.action.cards : [];
   const hasManualPlay = staged.length > 0 && (automaticSession?.revision !== view?.revision ||
     staged.length !== planned.length || staged.some((card, index) => card.id !== planned[index]?.id));
-  if (autoplay || !view || !canUseStock() || hasManualPlay || menu.matches(":popover-open") ||
+  if (autoplay || !view || view.result || !canUseStock() || menu.matches(":popover-open") ||
       document.querySelector("dialog[open]") || canceledAutomaticRevision === view.revision) return;
+  if (settings.autoStaged && staged.length) return { type: "play", cards: staged.slice() };
+  if (hasManualPlay) return;
   return automaticActions.next(view, settings);
 }
 
@@ -630,7 +641,7 @@ function setupSettings(): void {
   const groupTwo = element<HTMLInputElement>("group-except-two");
   const automaticDelay = element<HTMLInputElement>("automatic-delay");
   const checks = {
-    autoPass: "auto-pass", autoPickup: "auto-pickup", autoSingle: "auto-single",
+    autoStaged: "auto-staged", autoPass: "auto-pass", autoPickup: "auto-pickup", autoSingle: "auto-single",
     autoSingleExcludeWild: "auto-single-exclude-wild", autoSingleExcludeTwo: "auto-single-exclude-two",
     autoSingleExcludeQueen: "auto-single-exclude-queen",
     autoSingleIgnoreExclusionsWhenOpponentEmpty: "auto-single-ignore-exclusions-when-opponent-empty",
