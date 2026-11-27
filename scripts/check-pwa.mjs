@@ -59,7 +59,7 @@ const app=fixture();await app.install();
 assert.equal(app.stores.size,3+manifest.icons.length);
 for(const mode of ['offline','error','invalid','hanging','body-hanging']){
  app.setMode(mode);
- const navigation=app.navigate('?fresh-link=1#network=playroom');
+ const navigation=app.navigate('?fresh-link=1#network=crazy-eights-v3');
  if(mode.includes('hanging')){
   await new Promise(resolve=>setImmediate(resolve));
   assert.equal(app.timers.size,1);

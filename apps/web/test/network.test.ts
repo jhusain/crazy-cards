@@ -1,13 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Worker } from "node:worker_threads";
 import { GameServer } from "@crazy-eights/game-server";
 import { SUITS, type Seat, type TableView, type Response } from "@crazy-eights/protocol";
 import { invitationFromHash, invitationUrl, isNetworkRequest } from "../src/network-protocol.ts";
 import { OpponentReplay } from "../src/opponent-replay.ts";
 
 test("invitation round-trips a Pages subpath without putting secrets in the query", () => {
-  const invite = { room: "random-room", password: "random-secret", host: "host-peer" };
+  const invite = { room: crypto.randomUUID(), password: crypto.randomUUID() };
   const url = new URL(invitationUrl("https://jhusain.github.io/crazy-cards/?debug=true#old", invite));
   assert.equal(url.pathname, "/crazy-cards/");
   assert.equal(url.search, "?debug=true");
@@ -78,38 +77,4 @@ test("two human seats finish rounds with host validation and private drawn cards
     if (card) plays++;
   }
   assert.equal(rounds, 3); assert(plays > 10);
-});
-
-test("host worker routes request IDs to the right seat and rejects remote worker controls", async t => {
-  const workerUrl = new URL("../src/game.worker.ts", import.meta.url).href;
-  const worker = new Worker(`const {parentPort}=require('node:worker_threads');
-    globalThis.self={postMessage:data=>parentPort.postMessage(data)};
-    import(${JSON.stringify(workerUrl)}).then(()=>{parentPort.on('message',data=>self.onmessage({data}));parentPort.postMessage('ready')});`, { eval: true });
-  t.after(() => worker.terminate());
-  const messages: Array<string | { remote: string }> = [];
-  const next = (predicate: (message: string | { remote: string }) => boolean) => new Promise<string | { remote: string }>((resolve, reject) => {
-    const timer = setTimeout(() => { worker.off("message", listener); reject(new Error("Host worker response timed out")); }, 5000);
-    const listener = (message: string | { remote: string }) => { if (predicate(message)) { clearTimeout(timer); worker.off("message", listener); resolve(message); } };
-    worker.on("message", listener);
-  });
-  const ready = next(message => message === "ready");
-  worker.on("message", message => { if (message !== "ready") messages.push(message); });
-  await ready;
-  let remote = next(message => typeof message !== "string" && !!message.remote);
-  worker.postMessage({ network: true });
-  const initial = JSON.parse((await remote as { remote: string }).remote) as Response;
-  assert.equal(initial.view.seat, 1);
-  worker.postMessage({ remote: JSON.stringify({ debug: true }) });
-  worker.postMessage({ remote: JSON.stringify({ requestId: 20, revision: initial.view.revision, command: { type: "debug-aggressiveness" } }) });
-  remote = next(message => typeof message !== "string" && JSON.parse(message.remote).requestId === 21);
-  worker.postMessage({ remote: JSON.stringify({ requestId: 21, revision: initial.view.revision, command: { type: "snapshot" } }) });
-  assert.equal(JSON.parse((await remote as { remote: string }).remote).view.seat, 1);
-  assert(!messages.some(message => typeof message === "string" && JSON.parse(message).requestId === 21));
-  assert(!messages.some(message => typeof message !== "string" && JSON.parse(message.remote).requestId === 20));
-  const local = next(message => typeof message === "string" && JSON.parse(message).requestId === 22);
-  worker.postMessage(JSON.stringify({ requestId: 22, revision: initial.view.revision, command: { type: "snapshot" } }));
-  assert.equal(JSON.parse(await local as string).view.seat, 0);
-  remote = next(message => typeof message !== "string" && JSON.parse(message.remote).requestId === 23);
-  worker.postMessage({ remote: JSON.stringify({ requestId: 23, revision: -1, command: { type: "draw" } }) });
-  assert.equal(JSON.parse((await remote as { remote: string }).remote).type, "error");
 });

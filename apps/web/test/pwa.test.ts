@@ -7,8 +7,8 @@ import { setupInvitationLinks } from "../src/pwa.ts";
 import { invitationUrl, type Invitation } from "../src/network-protocol.ts";
 
 const base = "https://game.test/crazy-cards/";
-const first = { room: "first", password: "secret", host: "host" };
-const second = { ...first, room: "second" };
+const first = { room: crypto.randomUUID(), password: crypto.randomUUID() };
+const second = { ...first, room: crypto.randomUUID() };
 
 function browser(href = base, launchSupport = true) {
   const listeners = new Map<string, () => void>();
@@ -55,10 +55,11 @@ test("duplicate launch delivery does not restart a match, but a different invite
   const joins: Invitation[] = [];
   let resets = 0;
   const context: any = {
+    window: { history: { replaceState() {} } }, location: { href: base }, invitationUrl,
     network: undefined, activeInvitation: undefined, networkGeneration: 0, debug: false, history: {}, worker: undefined,
     resetSession() { resets++; context.network = undefined; context.activeInvitation = undefined; },
     element: () => ({}), networkDialog: { showModal() {} }, bindConnection() {}, sendTiming() {}, updateControls() {},
-    NetworkConnection: class { constructor(_server: unknown, invite: Invitation) { joins.push(invite); } },
+    NetworkConnection: class { constructor(invite: Invitation) { joins.push(invite); } },
   };
   runInNewContext(script, context);
   await context.startNetwork(first);

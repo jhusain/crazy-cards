@@ -15,7 +15,7 @@ import { debugPlayMessage } from "./debug-play.ts";
 import { ANIMATION_SPEEDS, DEFAULT_SETTINGS, readSettings, type GameSettings } from "./settings.ts";
 import { CardTable } from "./table.ts";
 import { replayDelay, replaySpeed, STAGE_FLIGHT, tableAnimationTime, type TableTiming } from "./table-timing.ts";
-import { NetworkConnection, type GameConnection } from "./network.ts";
+import { getHostedMatch, NetworkConnection, type GameConnection, type HostedMatch } from "./network.ts";
 import { invitationUrl, type Invitation } from "./network-protocol.ts";
 import LocalServer from "./game.worker.ts?worker&inline";
 import "@fontsource/barlow-condensed/latin-700.css";
@@ -922,7 +922,8 @@ async function start(): Promise<void> {
     stopPowerSounds: () => feedback.stopPowerSounds(),
     ready: () => {
       tableReady = true;
-      if (incomingInvitation) void startNetwork(incomingInvitation);
+      const hosted = incomingInvitation ? undefined : getHostedMatch();
+      if (incomingInvitation || hosted) void startNetwork(incomingInvitation, hosted);
       else send({ type: "snapshot" });
     },
   }, images, density);
@@ -944,7 +945,8 @@ function resetSession(): void {
   cancelAutomaticAction();
   clearTimeout(animationTimer);
   animationTimer = undefined;
-  worker?.terminate();
+  if (network) network.leaveMatch();
+  else worker?.terminate();
   worker = undefined;
   network = undefined;
   activeInvitation = undefined;
@@ -973,30 +975,44 @@ function startLocal(snapshot = true): void {
   if (snapshot) send({ type: "snapshot" });
 }
 
-async function startNetwork(invite?: Invitation): Promise<void> {
+async function startNetwork(invite?: Invitation, hosted?: HostedMatch): Promise<void> {
   // A launch can arrive through both hashchange and launchQueue. Join it once.
   if (invite && network && activeInvitation && invite.room === activeInvitation.room &&
-    invite.password === activeInvitation.password && invite.host === activeInvitation.host) return;
+    invite.password === activeInvitation.password) return;
   const generation = ++networkGeneration;
   resetSession();
   activeInvitation = invite;
   debug = false;
   history.network = true;
   element("network-invitation").hidden = true;
-  element("network-diagnostics").textContent = "";
   element("network-offline").hidden = true;
   element("cancel-network").hidden = false;
   element("copy-network").textContent = "Copy link";
-  element("network-status").textContent = invite ? "Connecting to the host…" : "Creating invitation…";
+  element("network-status").textContent = invite ? "Joining the match…" : "Creating invitation…";
   networkDialog.showModal();
-  const invitation = invite ?? { room: crypto.randomUUID(), password: crypto.randomUUID(), host: "" };
+  const invitation = invite ?? (hosted ? { room: hosted.room, password: hosted.password }
+    : { room: crypto.randomUUID(), password: crypto.randomUUID() });
+  if (invite) window.history.replaceState(null, "", invitationUrl(location.href, invite));
   try {
-    const connection = new NetworkConnection(invite ? undefined : new LocalServer(), invitation, {
+    const connection = new NetworkConnection(invitation, !invite, {
       connected: () => {
         if (generation !== networkGeneration) return;
         networkReady = true;
         networkDialog.close();
-        sendTiming();
+        updateControls();
+        scene?.setLocked(!inputReady());
+      },
+      waiting: text => {
+        if (generation !== networkGeneration) return;
+        networkReady = false;
+        cancelAutomaticAction();
+        deckDraw = undefined;
+        busy = pendingCommand = undefined;
+        element("network-status").textContent = text;
+        if (view) element("network-invitation").hidden = true;
+        if (!networkDialog.open) networkDialog.showModal();
+        updateControls();
+        scene?.setLocked(true);
       },
       disconnected: text => {
         if (generation !== networkGeneration) return;
@@ -1015,9 +1031,7 @@ async function startNetwork(invite?: Invitation): Promise<void> {
         updateControls();
         scene?.setLocked(true);
       },
-      problem: text => { if (generation === networkGeneration) element("network-status").textContent = text; },
-      diagnostics: text => { if (generation === networkGeneration) element("network-diagnostics").textContent = text; },
-    });
+    }, hosted?.credential);
     network = connection;
     worker = connection;
     bindConnection();
@@ -1033,10 +1047,9 @@ async function startNetwork(invite?: Invitation): Promise<void> {
     updateControls();
   } catch (error) {
     if (generation !== networkGeneration) return;
-    activeInvitation = undefined;
-    worker?.terminate();
-    element("network-status").textContent = "Couldn’t start the connection. Check your internet connection and try again.";
-    console.error(error);
+    if (activeInvitation || !element("cancel-network").hidden) {
+      element("network-status").textContent = error instanceof Error ? error.message : "Couldn’t start the connection.";
+    }
   }
 }
 

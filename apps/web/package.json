@@ -7,7 +7,6 @@
     "@crazy-eights/protocol": "*",
     "@fontsource-variable/inter": "^5.2.0",
     "@fontsource/barlow-condensed": "^5.2.0",
-    "phaser": "4.2.1",
-    "playroomkit": "0.0.97"
+    "phaser": "4.2.1"
   }
 }

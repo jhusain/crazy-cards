@@ -55,17 +55,19 @@ The jack, queen, and king illustrations are cropped from [AustinGabriel64’s pu
 
 The client sends a serialized `{requestId, revision, command}` envelope. The worker calls `GameServer.handleJSON(seat, body)` and returns the serialized response. Each response contains the requesting seat’s hand and the public table state. The opponent’s hidden cards and the stock order stay inside the server.
 
-For network play, the host runs `new GameServer(null, undefined, false, true)` in its worker: both seats are human, with forced draws/passes and committed queues still advanced automatically. Playroom Kit carries game packets over its reliable RPC/WebSocket path, so a match does not depend on a direct WebRTC connection. The existing static GitHub Pages deployment needs no game backend. The public Playroom game ID (`Gg5IWVj3dv7J7pF7wJTC`) identifies this project; no server API key is embedded or required.
-
 ### Network matches
 
-Choose **New network match**, below **New Match**, and copy or share the invitation. Opening it on another device joins automatically; both dialogs close when the guest is accepted and the host deals. Each session runs the bundled Playroom SDK in an isolated hidden frame so cancelling or leaving closes its sockets and a fresh match starts cleanly. The SDK and game remain bundled into the single HTML artifact; solo/offline play does not initialize Playroom.
+Choose **New network match** below **New Match**, then copy or share the invitation. Opening it on another device joins automatically. Cloudflare Workers runs one Durable Object per room, with both human seats using the same `GameServer` package as offline play. The room advances forced draws, passes, and committed queues, taking both players' animation speeds into account. Either player can advance a completed round or restart the match.
 
-Invitations include the room code, original host player ID, and a random 128-bit secret in the URL fragment. Game packets are authenticated and encrypted with AES-GCM using a key derived from that random secret; the host accepts only a guest proving possession of the invitation. Monotonic per-sender sequence numbers reject duplicate packets. Never send the invitation to anyone you do not want joining. Playroom limits each room to two players, and only the guest’s seat-specific view leaves the host worker. Remote requests cannot change worker controls, enable debug, or control the host seat.
+The invitation contains a random room ID and guest key in the URL fragment. Share it with the person you want to play. The players connect over secure WebSockets and receive separate views. The room validates commands and revisions, keeps the hidden cards and stock on the server, and reserves each seat for its own reconnect credential.
 
-Each device sees its own hand and settings. In network mode, Instant Replay contains only the opponent’s previous consecutive sequence, never local draws, passes, or plays. Replaying or opening menus does not pause the other device. Queued plays wait for the longer of both devices’ animation timings. Either player can advance a completed round or restart the network match; stale simultaneous requests are rejected by revision checks.
+The room persists its match state across hibernation. The web client automatically retries an interrupted connection for up to two minutes while the page remains open. Either player can reload the same tab to reclaim their seat. Earlier invitation links need to be recreated. Leaving from the game's controls ends the room. Rooms expire after two hours without game activity.
 
-Keep both pages open and the host device awake. Disconnecting or reloading ends the connection; there is no host migration or saved network match. A disconnect dialog offers a return to computer play, after which you can create a fresh network invitation. Old Trystero invitations must be replaced with a new Playroom invitation. The connection still depends on Playroom service availability and its free-plan limits.
+#### Deploying multiplayer
+
+The `crazy-cards` Worker is connected to this repository's `main` branch using Cloudflare Workers Builds. The build runs from the repository root and deploys with `npx wrangler deploy`, using the root `wrangler.jsonc` and Cloudflare's managed build token. GitHub Pages publishes the web app separately. Its public WebSocket endpoint is configured with `VITE_NETWORK_SERVER_URL` in the Pages workflow.
+
+For local multiplayer, run `npm run dev:cloudflare` and set `VITE_NETWORK_SERVER_URL=ws://localhost:8787` when running `npm run dev`. Run `npm run test:cloudflare` to exercise the room against the local Cloudflare runtime.
 
 ## Java reference
 

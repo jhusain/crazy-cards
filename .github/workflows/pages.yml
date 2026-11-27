@@ -22,7 +22,11 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      - run: npm run check:cloudflare
+      - run: npm run test:cloudflare
       - run: npm run build
+        env:
+          VITE_NETWORK_SERVER_URL: wss://crazy-cards.jhusain.workers.dev
       - run: node scripts/check-pwa.mjs
       - name: Update gh-pages
         env:
