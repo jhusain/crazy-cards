@@ -10,6 +10,7 @@ export interface GameSettings {
   dangerThreshold: number;
   targetCardWidth: number;
   keepGroupsTogether: boolean;
+  // Retain the saved key: enabled wild flicks now play a single eight immediately.
   groupExceptWild: boolean;
   groupExceptTwo: boolean;
   autoStaged: boolean;

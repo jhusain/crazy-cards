@@ -36,6 +36,7 @@ export function flickPlay(
   card: Card, hand: readonly Card[], legalLeads: readonly number[], settings: FlickSettings,
   random: () => number = Math.random,
 ): Card[] | undefined {
+  if (card.special === "wild" && settings.groupExceptWild) return legalLeads.includes(card.id) ? [card] : undefined;
   const group = [card, ...hand.filter(other => other.id !== card.id && other.rank === card.rank)];
   if (excludedGroup(group, settings)) return;
   if (!legalLeads.includes(card.id) && !flickPlayableCards(hand, legalLeads, settings).has(card.id)) return;

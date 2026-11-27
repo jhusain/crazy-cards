@@ -95,3 +95,34 @@ test("a flick commits the sampled hover order without drawing new random choices
   state.flickCard(1, [0, 2, 1]);
   assert.deepEqual(played, [[0, 2, 1]]);
 });
+
+ test("wild flicks immediately play only the selected eight, even with other eights or staged cards", () => {
+  for (const hasStaged of [false, true]) for (const withOrder of [false, true]) {
+    const { context, played } = setup(false);
+    const wild: Card = { id: 7, rank: 8, suit: "hearts", special: "wild" };
+    const other: Card = { id: 20, rank: 8, suit: "diamonds", special: "wild" };
+    context.view.hand.push(wild, other);
+    context.view.legalLeads.push(wild.id, other.id);
+    if (hasStaged) context.tapCard(0);
+    const stagedBefore = Array.from(context.staged);
+    context.flickCard(wild.id, withOrder ? [wild.id] : undefined);
+    assert.deepEqual(played, [[wild.id]]);
+    assert.deepEqual(Array.from(context.staged), stagedBefore);
+  }
+});
+
+test("disabling single-wild flicks restores group plays and preserves ordinary tap staging", () => {
+  const { context, played } = setup(false);
+  const wild: Card = { id: 7, rank: 8, suit: "hearts", special: "wild" };
+  const other: Card = { id: 20, rank: 8, suit: "diamonds", special: "wild" };
+  context.view.hand.push(wild, other);
+  context.view.legalLeads.push(wild.id, other.id);
+  context.settings.groupExceptWild = false;
+  context.flickCard(wild.id);
+  assert.deepEqual(played, [[other.id, wild.id]]);
+  played.length = 0;
+  context.settings.groupExceptWild = true;
+  context.tapCard(wild.id);
+  assert.deepEqual(played, []);
+  assert.deepEqual(Array.from(context.staged, (card: Card) => card.id), [wild.id]);
+});

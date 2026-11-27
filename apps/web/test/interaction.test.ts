@@ -64,7 +64,7 @@ test("flicks always select the top card, using a matching group lead when needed
   assert.deepEqual(flickPlay(hearts, hand, legal, DEFAULT_SETTINGS), [clubs, hearts]);
 });
 
-test("wild and two staging applies only when another card of that rank remains", () => {
+test("wild flicks play one immediately while two exclusions still stage pairs", () => {
   const wild: Card = { id: 7, suit: "hearts", rank: 8, special: "wild" };
   const wildPair: Card = { id: 20, suit: "diamonds", rank: 8, special: "wild" };
   const two: Card = { id: 1, suit: "hearts", rank: 2, special: "pickup" };
@@ -72,7 +72,7 @@ test("wild and two staging applies only when another card of that rank remains",
   const hand = [wild, wildPair, two, twoPair];
   for (const [card, setting] of [[wild, "groupExceptWild"], [two, "groupExceptTwo"]] as const) {
     const legal = [card.id, ...hand.filter(other => other.rank === card.rank).map(other => other.id)];
-    assert.equal(flickPlay(card, hand, legal, DEFAULT_SETTINGS), undefined);
+    assert.deepEqual(flickPlay(card, hand, legal, DEFAULT_SETTINGS), setting === "groupExceptWild" ? [card] : undefined);
     assert.equal(flickPlay(card, hand, legal, { ...DEFAULT_SETTINGS, [setting]: false })?.length, 2);
     const singletonHand = hand.filter(other => other.id === card.id || other.rank !== card.rank);
     assert.deepEqual(flickPlay(card, singletonHand, legal, DEFAULT_SETTINGS), [card]);
@@ -292,7 +292,7 @@ test("shading shares group eligibility and respects flick exclusions and the rem
   for (const [rank, special, exclusion] of [[2, "pickup", "groupExceptTwo"], [8, "wild", "groupExceptWild"]] as const) {
     const a = { ...clubs, rank, special }, b = { ...diamonds, rank, special };
     const group = [a, b];
-    assert.equal(flickPlay(a, group, [a.id], settings), undefined);
+    assert.deepEqual(flickPlay(a, group, [a.id], settings), exclusion === "groupExceptWild" ? [a] : undefined);
     assert.equal(flickPlay(b, group, [a.id], settings), undefined);
     assert.deepEqual(flickPlayableCards(group, [a.id], settings), new Set([a.id]));
     const allowed = { ...settings, [exclusion]: false };

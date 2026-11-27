@@ -186,6 +186,11 @@ function flickCard(id: number, order?: readonly number[]): void {
   if (!view || !canUseStock()) return;
   const card = view.hand.find(candidate => candidate.id === id);
   if (!card) return;
+  if (card.special === "wild" && settings.groupExceptWild) {
+    if (view.legalLeads.includes(card.id)) choosePlay([card], true);
+    else scene?.returnDraggedCards();
+    return;
+  }
   const remaining = view.hand.filter(card => !staged.some(queued => queued.id === card.id));
   const previous = staged.at(-1);
   const legal = previous ? remaining.filter(card => canFollowInQueue(card, previous)).map(card => card.id) : view.legalLeads;
