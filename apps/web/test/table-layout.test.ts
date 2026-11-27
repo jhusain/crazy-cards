@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  planTableLayout, targetHandPlan, committedFromPlay, collapsePlayPositions, ART_WIDTH, CARD_DEPTH, CORNER_HEIGHT, CORNER_WIDTH, PILE_STEP, artHeight,
+  hoverPositions, planTableLayout, targetHandPlan, committedFromPlay, collapsePlayPositions, ART_WIDTH, CARD_DEPTH, CORNER_HEIGHT, CORNER_WIDTH, PILE_STEP, artHeight,
   groupHandRows, handPositions, opponentPositions, pilePositions, playLandingPositions, replayPosition, automaticActionPosition, tableLayout, type CardPosition,
 } from "../src/table-layout.ts";
 
@@ -440,4 +440,23 @@ test("equally wide layouts with the same row count fill the earlier rows first",
   const { hand } = planTableLayout(360, 740, { cards: grouped, target: 240, keepGroups: true });
   close(hand.width, 240);
   assert.deepEqual(hand.rows, [grouped.slice(0, 2), grouped.slice(2)]);
+});
+
+test("hover fans anchor the selected top card and expose each earlier card's corner", () => {
+  for (const width of [60, 142, 240]) for (const count of [1, 2, 3, 4]) {
+    const anchor = { x: 225, y: 410, width, clipWidth: 35, clipHeight: 65 };
+    const positions = hoverPositions(anchor, count);
+    assert.deepEqual(positions.at(-1), { x: anchor.x, y: anchor.y, width });
+    for (let index = 0; index < count; index++) {
+      assert.equal(positions[index]!.y, anchor.y);
+      assert.equal(positions[index]!.width, width);
+      assert.equal(positions[index]!.clipHeight, undefined);
+      if (index) {
+        const gap = positions[index]!.x - positions[index - 1]!.x;
+        close(gap, width * PILE_STEP);
+        assert(gap >= width * CORNER_WIDTH / ART_WIDTH);
+      }
+    }
+    assert.equal(anchor.clipHeight, 65);
+  }
 });

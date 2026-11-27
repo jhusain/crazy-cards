@@ -53,6 +53,17 @@ export function flickPlay(
   return [...others, card];
 }
 
+// Keep the order sampled at drag start, while rejecting a stale or no-longer-legal plan.
+export function retainedFlickPlay(
+  order: readonly number[], card: Card, hand: readonly Card[], legalLeads: readonly number[], settings: FlickSettings,
+): Card[] | undefined {
+  const eligible = flickPlay(card, hand, legalLeads, settings, () => 0);
+  if (!eligible || order.length !== eligible.length || new Set(order).size !== order.length ||
+      order.at(-1) !== card.id || !legalLeads.includes(order[0]!) ||
+      !eligible.every(candidate => order.includes(candidate.id))) return;
+  return order.map(id => hand.find(candidate => candidate.id === id)!);
+}
+
 // Start tracking after a small deliberate vertical movement; staged left swipes also track.
 export function isCardDrag(dx: number, dy: number, staged: boolean): boolean {
   return Math.abs(dy) >= 6 || staged && dx <= -6;

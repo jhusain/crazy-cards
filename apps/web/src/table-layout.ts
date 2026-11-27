@@ -19,6 +19,13 @@ export interface CardPosition {
   x: number; y: number; width: number; clipWidth?: number; clipHeight?: number;
 }
 
+// The selected top card stays anchored; earlier cards expose their corners to its left.
+export function hoverPositions(top: CardPosition, count: number): CardPosition[] {
+  return Array.from({ length: count }, (_, index) => ({
+    x: top.x + (index - count + 1) * top.width * PILE_STEP, y: top.y, width: top.width,
+  }));
+}
+
 export interface QueuedPileSlots {
   discardCount: number; playCount: number; playCapacity: number; playedCount: number;
 }

@@ -6,7 +6,7 @@ import {
   type Card, type Command, type Request, type Response, type Suit, type TableView,
 } from "@crazy-eights/protocol";
 import { DECKS, SUIT_SYMBOL, loadCardArt, suitLabel } from "./cards.ts";
-import { eligibleDrawDrop, flickPlay } from "./card-gesture.ts";
+import { eligibleDrawDrop, flickPlay, retainedFlickPlay } from "./card-gesture.ts";
 import { AutomaticActions, type AutomaticAction } from "./automatic-actions.ts";
 import { OpponentReplay } from "./opponent-replay.ts";
 import { roundProgress } from "./round-progress.ts";
@@ -181,15 +181,19 @@ function stagingChanged(): void {
   startAutomaticAction();
 }
 
-function flickCard(id: number): void {
+function flickCard(id: number, order?: readonly number[]): void {
   if (!view || !canUseStock()) return;
   const card = view.hand.find(candidate => candidate.id === id);
   if (!card) return;
   const remaining = view.hand.filter(card => !staged.some(queued => queued.id === card.id));
   const previous = staged.at(-1);
   const legal = previous ? remaining.filter(card => canFollowInQueue(card, previous)).map(card => card.id) : view.legalLeads;
-  const play = flickPlay(card, remaining, legal, settings);
-  if (!play) { tapCard(id); return; }
+  const play = order ? retainedFlickPlay(order, card, remaining, legal, settings) : flickPlay(card, remaining, legal, settings);
+  if (!play) {
+    if (order) scene?.returnDraggedCards();
+    else tapCard(id);
+    return;
+  }
   const commit = (cards: Card[]) => {
     if (!staged.length) { choosePlay(cards, true); return; }
     const combined = [...staged, ...cards];

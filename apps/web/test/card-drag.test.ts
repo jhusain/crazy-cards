@@ -209,3 +209,60 @@ test("deck releases use the same discard and play hitboxes, while cancellation g
   stock.onpointercancel(pointer(160, 200, 1500));
   assert.deepEqual(destinations, [undefined]);
 });
+
+function scatteredGroup() {
+  const context = setup();
+  const { scene } = context;
+  for (const [id, suit, x, y] of [[43, "spades", 120, 200], [4, "hearts", 90, 300]] as const) {
+    scene.state.view.hand.push({ id, suit, rank: 5, special: "normal" });
+    scene.priorCardPositions.set(id, { x, y, width: 90, clipHeight: 40 });
+    scene.cardImages.set(id, { x, y, depth: id, setDepth(depth: number) { this.depth = depth; } });
+  }
+  scene.priorCardPositions.set(17, { x: 30, y: 400, width: 100, clipHeight: 40 });
+  return context;
+}
+
+test("drag initiation fans a scattered group before the anchored top card and samples its order once", context => {
+  let samples = 0;
+  context.mock.method(Math, "random", () => { samples++; return 0; });
+  const { scene, button, pointer } = scatteredGroup();
+  const original = scene.state.view.hand.map((card: protocol.Card) => card.id);
+  let released: readonly number[] | undefined;
+  scene.controls.flickCard = (_id: number, order?: readonly number[]) => { released = order; };
+  button.onpointerdown(pointer(100, 500));
+  button.onpointermove(pointer(104, 492, 30));
+  const order = [...scene.dragged.keys()];
+  assert.deepEqual(order, [30, 43, 4, 17]);
+  assert.equal(samples, 2);
+  for (const [index, id] of order.entries()) {
+    const position = scene.priorCardPositions.get(id);
+    assert.equal(position.x, 34 + (index - 3) * 27);
+    assert.equal(position.y, 392);
+    assert.equal(position.width, 100);
+    assert.equal(position.clipHeight, undefined);
+  }
+  assert.equal(scene.cardImages.get(17).x, 34);
+  assert.equal(scene.cardImages.get(44).x, 60);
+  assert.deepEqual(scene.state.view.hand.map((card: protocol.Card) => card.id), original);
+  button.onpointermove(pointer(106, 450, 60));
+  button.onpointerup(pointer(106, 440, 90));
+  assert.deepEqual(released, order);
+  assert.equal(samples, 2);
+  assert.equal(scene.cardImages.get(17).x, 36);
+  assert.equal(scene.cardImages.get(17).y, 340);
+});
+
+test("canceling a reordered hover fan restores every original row, width, crop and depth", () => {
+  const { scene, button, pointer, finishReturn } = scatteredGroup();
+  const before = new Map([...scene.priorCardPositions].map(([id, position]: any) => [id, { ...position }]));
+  const depths = new Map([...scene.cardImages].map(([id, image]: any) => [id, image.depth]));
+  button.onpointerdown(pointer(100, 500));
+  button.onpointermove(pointer(110, 480, 30));
+  button.onpointercancel(pointer(110, 480, 40));
+  finishReturn();
+  for (const id of [30, 17, 43, 4]) {
+    assert.deepEqual({ ...scene.priorCardPositions.get(id) }, before.get(id));
+    assert.equal(scene.cardImages.get(id).depth, depths.get(id));
+  }
+  assert.equal(scene.dragFlickOrder, undefined);
+});

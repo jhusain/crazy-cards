@@ -7,7 +7,7 @@ import { canFollowInQueue, PLAY_SLOTS, type Card } from "@crazy-eights/protocol"
 import { GameServer } from "@crazy-eights/game-server";
 import { AutomaticActions } from "../src/automatic-actions.ts";
 import { DEFAULT_SETTINGS, readSettings } from "../src/settings.ts";
-import { flickPlay } from "../src/card-gesture.ts";
+import { flickPlay, retainedFlickPlay } from "../src/card-gesture.ts";
 
 const source = ts.createSourceFile("main.ts", readFileSync(new URL("../src/main.ts", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true);
 const names = ["validQueue", "tapCard", "flickCard", "dropCards", "clearPlay", "stagingChanged", "cancelAutomaticAction", "pauseAutomaticAction", "automaticCandidate", "startAutomaticAction"];
@@ -27,7 +27,7 @@ function setup(enabled = true) {
     staged: [], playCapacity: 0, message: undefined, settings: { ...DEFAULT_SETTINGS, autoStaged: enabled },
     automaticFrame: undefined, automaticSession: undefined, canceledAutomaticRevision: undefined,
     autoplay: false, automaticPanel: { hidden: true }, automaticActions: new AutomaticActions(),
-    canUseStock: () => true, render() {}, PLAY_SLOTS, canFollowInQueue, flickPlay,
+    canUseStock: () => true, render() {}, PLAY_SLOTS, canFollowInQueue, flickPlay, retainedFlickPlay,
     menu: { matches: () => blocked }, document: { querySelector: () => null },
     element: (id: string) => { if (!nodes.has(id)) nodes.set(id, { style: {} }); return nodes.get(id); },
     countdownBeat: (elapsed: number) => Math.floor(elapsed / 1000), feedback: { tick() {} },
@@ -87,4 +87,11 @@ test("cancel suppresses the countdown until the next staging change; menus pause
   assert.deepEqual(played, []);
   tick(7000);
   assert.deepEqual(played, [[0, 1]]);
+});
+
+test("a flick commits the sampled hover order without drawing new random choices", context => {
+  const { context: state, played } = setup(false);
+  context.mock.method(Math, "random", () => { throw new Error("Release must not reshuffle the hover group"); });
+  state.flickCard(1, [0, 2, 1]);
+  assert.deepEqual(played, [[0, 2, 1]]);
 });

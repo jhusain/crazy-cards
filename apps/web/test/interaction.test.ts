@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { GameServer } from "@crazy-eights/game-server";
 import { canFollowInQueue, wildSuitOptions, type Card, type TableView, type TurnEvent } from "@crazy-eights/protocol";
-import { eligibleDrawDrop, cardDropRegion, coveredArea, flickPlayableCards, flickPlay, isCardDrag, isUpwardFlick, isVerticalFlick, queuedCardFlick } from "../src/card-gesture.ts";
+import { retainedFlickPlay, eligibleDrawDrop, cardDropRegion, coveredArea, flickPlayableCards, flickPlay, isCardDrag, isUpwardFlick, isVerticalFlick, queuedCardFlick } from "../src/card-gesture.ts";
 import { OpponentReplay } from "../src/opponent-replay.ts";
 import { isDebug } from "../src/play-mode.ts";
 import { ANIMATION_SPEEDS, DEFAULT_SETTINGS, readSettings } from "../src/settings.ts";
@@ -382,4 +382,17 @@ test("drawn cards must be independently eligible for their drop destination", ()
   assert.equal(eligibleDrawDrop(card, view, Array(12).fill(five), "play"), undefined);
   assert.equal(eligibleDrawDrop(card, view, [], undefined), undefined);
   assert.equal(eligibleDrawDrop(card, { ...view, hand: [] }, [], "discard"), undefined);
+});
+
+test("release preserves the sampled hover order and rejects stale or invalid plans", () => {
+  const hand: Card[] = ["clubs", "diamonds", "hearts", "spades"].map((suit, id) =>
+    ({ id, rank: 5, suit: suit as Card["suit"], special: "normal" }));
+  const top = hand[1]!;
+  const order = [0, 3, 2, 1];
+  assert.deepEqual(retainedFlickPlay(order, top, hand, [0], DEFAULT_SETTINGS)?.map(card => card.id), order);
+  assert.equal(retainedFlickPlay([3, 0, 2, 1], top, hand, [0], DEFAULT_SETTINGS), undefined);
+  assert.equal(retainedFlickPlay([0, 3, 1, 2], top, hand, [0], DEFAULT_SETTINGS), undefined);
+  assert.equal(retainedFlickPlay([0, 3, 3, 1], top, hand, [0], DEFAULT_SETTINGS), undefined);
+  assert.equal(retainedFlickPlay(order, top, hand.slice(0, 3), [0], DEFAULT_SETTINGS), undefined);
+  assert.equal(retainedFlickPlay(order, top, hand, [], DEFAULT_SETTINGS), undefined);
 });

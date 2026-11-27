@@ -9,7 +9,7 @@ import { cardDropRegion, flickPlay, flickPlayableCards, isCardDrag, isUpwardFlic
 import { CardClicks } from "./card-click.ts";
 import { sortVisibleHand, type HandSortingStrategy } from "./hand-sorting.ts";
 import {
-  ART_HEIGHT, ART_WIDTH, CARD_DEPTH, HAND_FADE_WIDTH, PILE_STEP, artHeight, planTableLayout, opponentPositions, playLandingPositions,
+  ART_HEIGHT, ART_WIDTH, CARD_DEPTH, HAND_FADE_WIDTH, PILE_STEP, artHeight, planTableLayout, opponentPositions, playLandingPositions, hoverPositions,
   committedFromPlay, collapsePlayPositions, automaticActionPosition, replayPosition, stockLayerCount, tableLayout, type CardPosition, type QueuedPileSlots,
 } from "./table-layout.ts";
 import {
@@ -46,7 +46,7 @@ type BoardState = {
   view: TableView; staged: Card[]; back: number; locked: boolean; targetCardWidth: number; keepGroupsTogether: boolean; dimUnplayable: boolean; replaying: boolean; playCapacity?: number;
 };
 type Controls = {
-  tapCard: (id: number) => void; flickCard: (id: number) => void;
+  tapCard: (id: number) => void; flickCard: (id: number, order?: readonly number[]) => void;
   dropCards: (ids: number[], destination: "discard" | "play") => void;
   beginDeckDraw: () => boolean; releaseDeckDraw: (destination?: "discard" | "play") => void; deckClick: () => void;
   playQueue: () => void; clearPlay: () => void; ready: () => void; suitTick?: (sound: "tick" | "click") => void;
@@ -83,7 +83,8 @@ export class CardTable extends Phaser.Scene {
   private stockDrag?: { pointer: number; x: number; y: number; home: CardPosition; position: CardPosition; image: CardImage; card?: Card; released: boolean };
   private stockDrawOrigin?: { id: number; position: CardPosition };
   private cardImages = new Map<number, CardImage>();
-  private dragged = new Map<number, { image: CardImage; home: CardPosition; depth: number }>();
+  private dragged = new Map<number, { image: CardImage; home: CardPosition; hover: CardPosition; depth: number }>();
+  private dragFlickOrder?: number[];
   private dragReturn?: Phaser.Tweens.Tween;
   private cancelPointer?: () => void;
   private priorCardPositions = new Map<number, CardPosition>();
@@ -174,6 +175,7 @@ export class CardTable extends Phaser.Scene {
       this.cancelPointer?.();
       this.cancelPointer = undefined;
       this.dragged.clear();
+      this.dragFlickOrder = undefined;
       this.dragReturn = undefined;
       this.cardImages.clear();
       this.tweens.killAll();
@@ -953,8 +955,8 @@ export class CardTable extends Phaser.Scene {
 
   // Keep live images and cached positions together so the next paint starts at release.
   private moveDragged(dx: number, dy: number): void {
-    for (const [id, { image, home }] of this.dragged) {
-      const position = { ...home, x: home.x + dx, y: home.y + dy };
+    for (const [id, { image, hover }] of this.dragged) {
+      const position = { ...hover, x: hover.x + dx, y: hover.y + dy };
       this.placeImage(image, position);
       this.priorCardPositions.set(id, position);
     }
@@ -973,7 +975,7 @@ export class CardTable extends Phaser.Scene {
         if (t === 1) image.setDepth(depth);
       }
     };
-    const done = () => { this.dragged.clear(); this.dragReturn = undefined; };
+    const done = () => { this.dragged.clear(); this.dragFlickOrder = undefined; this.dragReturn = undefined; };
     if (immediate) { move(1); done(); }
     else this.dragReturn = this.tween(140, move, done);
   }
@@ -986,11 +988,15 @@ export class CardTable extends Phaser.Scene {
     const last = state.staged.at(-1);
     const legal = last ? remaining.filter(card => canFollowInQueue(card, last)).map(card => card.id) : state.view.legalLeads;
     const card = remaining.find(card => card.id === id);
-    const group = staged ? state.staged : card ? flickPlay(card, remaining, legal, state.flickSettings) ?? [card] : [];
+    const plan = !staged && card ? flickPlay(card, remaining, legal, state.flickSettings) : undefined;
+    const group = staged ? state.staged : plan ?? (card ? [card] : []);
+    this.dragFlickOrder = plan?.map(card => card.id);
+    const anchor = this.priorCardPositions.get(id);
+    const hovering = !staged && anchor ? hoverPositions(anchor, group.length) : undefined;
     for (const [index, card] of group.entries()) {
       const image = this.cardImages.get(card.id), position = this.priorCardPositions.get(card.id);
       if (!image || !position) continue;
-      this.dragged.set(card.id, { image, home: { ...position }, depth: image.depth });
+      this.dragged.set(card.id, { image, home: { ...position }, hover: hovering?.[index] ?? { ...position }, depth: image.depth });
       image.setDepth(CARD_DEPTH.staging + PLAY_SLOTS * 2 + index);
     }
   }
@@ -1045,7 +1051,7 @@ export class CardTable extends Phaser.Scene {
       this.cancelPointer = undefined;
       if (gesture === "play") this.controls.playQueue();
       else if (gesture === "clear") this.controls.clearPlay();
-      else if (flick) this.controls.flickCard(id);
+      else if (flick) this.controls.flickCard(id, this.dragFlickOrder);
       else if (drop) this.controls.dropCards([...this.dragged.keys()], drop);
       else this.returnDraggedCards();
     };
