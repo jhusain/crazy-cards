@@ -6,7 +6,7 @@ test("countdown feedback changes beat only once per elapsed second",()=>{
  assert.deepEqual([0,16,999,1000,1016,1999,2000].map(countdownBeat),[0,0,0,1,1,1,2]);
 });
 
-test("the removed saved vibration preference cannot disable automatic feedback", () => {
+test("vibration defaults off and saved preferences persist independently of sound", () => {
  const saved = ["document", "navigator", "localStorage"].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
  const calls: (number | number[])[] = [];
  let written = "";
@@ -19,12 +19,32 @@ test("the removed saved vibration preference cannot disable automatic feedback",
  } });
  try {
   const feedback = new CountdownFeedback();
+  assert.equal(feedback.vibration, false);
   feedback.tick();
+  feedback.tableSlam(4, 400);
+  assert.match(feedback.testVibration(), /Vibration is off/);
+  assert.deepEqual(calls, []);
   feedback.sound = true;
   feedback.tableSlam(4, 400);
-  assert.deepEqual(calls, [25, impactVibration(4, 400)]);
+  assert.deepEqual(calls, []);
+  feedback.vibration = true;
+  feedback.tableSlam(4, 400);
+  assert.deepEqual(calls, [impactVibration(4, 400)]);
   feedback.save();
-  assert.deepEqual(JSON.parse(written), { sound: true });
+  assert.deepEqual(JSON.parse(written), { sound: true, vibration: true });
+  const storage = globalThis.localStorage;
+  storage.getItem = () => written;
+  assert.equal(new CountdownFeedback().vibration, true);
+  feedback.vibration = false;
+  assert.equal(calls.at(-1), 0);
+  calls.length = 0;
+  feedback.sound = false;
+  feedback.tick(); feedback.tableSlam(9); feedback.testVibration();
+  assert.deepEqual(calls, []);
+  storage.getItem = () => JSON.stringify({ sound: true });
+  assert.equal(new CountdownFeedback().vibration, false);
+  storage.getItem = () => null;
+  assert.equal(new CountdownFeedback().vibration, false);
  } finally {
   for (const [key, descriptor] of saved) {
    if (descriptor) Object.defineProperty(globalThis, key, descriptor);
@@ -43,6 +63,7 @@ test("impacts vibrate with sound on or off, muted countdowns vibrate, and cancel
  Object.defineProperty(globalThis, "navigator", { value: navigator, configurable: true });
  try {
   const feedback = new CountdownFeedback();
+  feedback.vibration = true;
   feedback.tableSlam(9, 600);
   assert.deepEqual(calls, [impactVibration(9, 600)]);
   feedback.stopImpactVibration();

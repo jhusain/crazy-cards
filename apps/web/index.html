@@ -79,8 +79,8 @@
       <button type="button" id="replay-shield" class="replay-shield" aria-label="Stop instant replay" hidden></button>
     </main>
     <dialog id="feedback-dialog">
-      <h2>Sound and vibration</h2>
-      <p>Enable countdown ticks, impact sounds, and wild-card suit chimes? Aggressive plays vibrate whether sound is on or off. Countdowns vibrate when sound is off. You can change sound in Settings.</p>
+      <h2>Sound</h2>
+      <p>Enable countdown ticks, impact sounds, and wild-card suit chimes? You can change sound and enable vibration separately in Settings.</p>
       <button id="allow-feedback">Enable</button>
       <button id="decline-feedback">Not now</button>
     </dialog>
@@ -153,7 +153,8 @@
         <fieldset class="flick-settings">
           <legend>Sound and vibration</legend>
           <label class="setting-check"><input id="sound-enabled" type="checkbox"> Sound</label>
-          <button id="enable-feedback" type="button">Enable sound and vibration</button>
+          <label class="setting-check"><input id="vibration-enabled" type="checkbox"> Vibration</label>
+          <button id="enable-feedback" type="button">Enable sound</button>
         </fieldset>
         <fieldset class="flick-settings automatic-settings">
           <legend>Automatic actions</legend>

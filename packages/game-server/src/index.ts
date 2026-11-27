@@ -48,8 +48,6 @@ export class GameServer {
   private event: TurnEvent | null = null;
   private result: RoundEnd | null = null;
   private queued: { seat: Seat; moves: PlayMove[] } | null = null;
-  private skipAggression = 0;
-  private skipRank: number | null = null;
 
   private readonly cpuSeat: Seat | null;
   private readonly random: RandomIndex;
@@ -182,8 +180,6 @@ export class GameServer {
     this.event = null;
     this.result = null;
     this.queued = null;
-    this.skipAggression = 0;
-    this.skipRank = null;
     this.round++;
     this.revision++;
   }
@@ -252,8 +248,6 @@ export class GameServer {
     this.drewThisTurn = false;
     this.passesWithoutProgress = 0;
     this.event = this.queued = null;
-    this.skipAggression = 0;
-    this.skipRank = null;
     this.autoplay = false;
     this.revision++;
   }
@@ -304,10 +298,6 @@ export class GameServer {
   }
 
   private drawCards(seat: Seat, count: number): { drawnCards: number[]; reshuffles: DeckReshuffle[] } {
-    if (seat === this.turn) {
-      this.skipAggression = 0;
-      this.skipRank = null;
-    }
     const drawn: number[] = [];
     const reshuffles: DeckReshuffle[] = [];
     while (drawn.length < count) {
@@ -367,15 +357,10 @@ export class GameServer {
       const pile = [...this.discard, ...this.lastPlay];
       for (let index = pile.length - 1; index >= 0 && pile[index]!.rank === 2; index--) precedingTwos++;
     }
-    const aggressiveness = this.skipAggression + (containsSkip ? 1 : 0) + (queenOnTop ? 4 : 0) + twos + precedingTwos +
-      (ids.length === hand.length ? 1 : 0) + (played.length === 4 ? 1 : 0) +
+    const aggressiveness = (queenOnTop ? 4 : 0) + twos + precedingTwos +
+      (ids.length === hand.length ? 1 : 0) + (played.length === 4 && !containsSkip ? 1 : 0) +
       ((twos > 0 || queenOnTop) && this.hands[opponent].length === 0 ? 1 : 0);
-    // Only carry skip increments, never intrinsic points. Each same-rank run contributes once,
-    // after its first play has been scored, even when staged cards arrive as separate moves.
-    if (containsSkip && lead.rank !== this.skipRank) {
-      this.skipAggression++;
-      this.skipRank = lead.rank;
-    }
+    // Jacks and aces add no intrinsic aggression or carryover, even as quadruples.
     const burnsPreviousPlay = this.lastPlaySeat === opponent && this.hands[opponent].length > 0 &&
       played.some(card => card.special === "wild") &&
       this.lastPlay.slice(-this.lastPlaySize).some(card => card.special === "wild");
@@ -415,10 +400,6 @@ export class GameServer {
   }
 
   private advance(next: Seat): void {
-    if (next !== this.turn) {
-      this.skipAggression = 0;
-      this.skipRank = null;
-    }
     this.turn = next;
     this.drewThisTurn = false;
     if (this.hands[next].length > 0) return;
