@@ -10,10 +10,10 @@ const functions = source.statements.filter(statement => ts.isFunctionDeclaration
   ["drawOrPass", "beginDeckDraw"].includes(statement.name?.text ?? "")).map(statement => statement.getText(source)).join("\n");
 const script = ts.transpileModule(functions, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 
-test("deck clicks warn at twenty even after a draw, then pass after the warning", () => {
+test("deck clicks warn at the limit even after a draw, then pass after the warning", () => {
   for (const drewThisTurn of [false, true]) {
     const commands: string[] = [];
-    const context = { view: { hand: Array(20), drewThisTurn, event: null as any }, staged: [], MAX_HAND_CARDS,
+    const context = { view: { hand: Array(MAX_HAND_CARDS), drewThisTurn, event: null as any }, staged: [], MAX_HAND_CARDS,
       canUseStock: () => true, send: (command: { type: string }) => commands.push(command.type) };
     runInNewContext(script, context);
     (context as any).drawOrPass();
@@ -25,9 +25,9 @@ test("deck clicks warn at twenty even after a draw, then pass after the warning"
   }
 });
 
-test("pressing the deck at twenty can request a warning but never reveal an extra card", () => {
+test("pressing the deck at the limit can request a warning but never reveal an extra card", () => {
   const commands: string[] = [];
-  const context: any = { view: { hand: Array(20), drewThisTurn: true, event: null }, MAX_HAND_CARDS,
+  const context: any = { view: { hand: Array(MAX_HAND_CARDS), drewThisTurn: true, event: null }, MAX_HAND_CARDS,
     deckDraw: undefined, canUseStock: () => true, scene: { setLocked() {} },
     send: (command: { type: string }) => { commands.push(command.type); return 1; } };
   runInNewContext(script, context);

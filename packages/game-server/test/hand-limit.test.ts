@@ -41,21 +41,21 @@ test("a full hand warns without drawing, then passes on another draw for either 
   }
 });
 
-test("drawing the twentieth card succeeds and the following draw warns before passing", () => {
-  const server = position(19);
-  assert.equal(send(server, 0, { type: "draw" }).hand.length, 20);
+test("drawing the twenty-sixth card succeeds and the following draw warns before passing", () => {
+  const server = position(MAX_HAND_CARDS - 1);
+  assert.equal(send(server, 0, { type: "draw" }).hand.length, MAX_HAND_CARDS);
   assert.equal(send(server, 0, { type: "draw" }).event?.handLimitReached, true);
   assert.equal(send(server, 0, { type: "draw" }).event?.kind, "pass");
 });
 
 test("after the warning a player can play or explicitly pass, and later turns warn again", () => {
-  const server = position(20);
+  const server = position(MAX_HAND_CARDS);
   const warned = send(server, 0, { type: "draw" });
   const id = warned.hand.find(card => card.rank === 8)!.id;
   const played = send(server, 0, { type: "play", cards: [id], suit: "hearts" });
-  assert.equal(played.hand.length, 19);
+  assert.equal(played.hand.length, MAX_HAND_CARDS - 1);
   assert.equal(played.turn, 1);
-  const full = position(20);
+  const full = position(MAX_HAND_CARDS);
   send(full, 0, { type: "draw" });
   send(full, 0, { type: "pass" });
   send(full, 1, { type: "draw" });
@@ -63,8 +63,8 @@ test("after the warning a player can play or explicitly pass, and later turns wa
   assert.equal(send(full, 0, { type: "draw" }).event?.handLimitReached, true);
 });
 
-test("penalty pickups stop at twenty and report the actual number drawn", () => {
-  for (const count of [19, 20]) {
+test("penalty pickups stop at the limit and report the actual number drawn", () => {
+  for (const count of [MAX_HAND_CARDS - 1, MAX_HAND_CARDS]) {
     const server = position(count, 1);
     const deck = standardDeck();
     const two = deck.find(card => card.rank === 2 && card.suit === "spades")!;
@@ -75,7 +75,7 @@ test("penalty pickups stop at twenty and report the actual number drawn", () => 
     Object.assign(server, { hands: [[two], hand], turn: 0, lastPlay: [top],
       stock: deck.filter(card => !used.has(card.id)) });
     const result = send(server, 0, { type: "play", cards: [two.id] });
-    assert.equal(result.opponentCount, 20);
-    assert.equal(result.event?.penalty?.count, 20 - count);
+    assert.equal(result.opponentCount, MAX_HAND_CARDS);
+    assert.equal(result.event?.penalty?.count, MAX_HAND_CARDS - count);
   }
 });
