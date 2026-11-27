@@ -278,6 +278,20 @@ dialog {
   box-shadow: 0 20px 70px #0009, inset 0 1px #fff2;
 }
 dialog::backdrop { background: #100f14cf; }
+#game-state-dialog { width: min(calc(100% - 28px), 760px); }
+#game-state-json {
+  display: block;
+  width: 100%;
+  height: min(45dvh, 340px);
+  margin-bottom: 12px;
+  padding: 10px;
+  resize: vertical;
+  background: #171419;
+  color: #ffefd2;
+  border: 1px solid #ceb078;
+  border-radius: 6px;
+  font: 12px/1.4 monospace;
+}
 .dialog-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .dialog-heading h2 { margin: 0; font: 800 39px/.87 var(--display); text-transform: uppercase; }
 .choice-dialog { min-height: 172px; }

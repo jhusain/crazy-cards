@@ -82,6 +82,15 @@ export class GameServer {
     return new GameServer(null, undefined, false, true, state);
   }
 
+  /** Full debug snapshot; never expose hidden cards in a human match. */
+  exportDebugState() {
+    if (!this.debug || this.cpuSeat === null) throw new Error("Game state export requires an AI game in debug mode.");
+    return {
+      ...this.saveMatch(), cpuSeat: this.cpuSeat, autoplay: this.autoplay,
+      debug: this.debug, automaticForcedTurns: this.automaticForcedTurns,
+    };
+  }
+
   setAutoplay(enabled: boolean): void {
     this.autoplay = enabled;
   }

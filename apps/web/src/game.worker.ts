@@ -44,11 +44,15 @@ function scheduleTurn(): void {
 }
 
 self.onmessage = ({ data }: MessageEvent<string>) => {
-  let message: { debug?: boolean; autoplay?: boolean; paused?: boolean; replay?: boolean; timing?: Partial<TableTiming>; holdMs?: number; command?: Command } | null = null;
+  let message: { exportGameState?: boolean; debug?: boolean; autoplay?: boolean; paused?: boolean; replay?: boolean; timing?: Partial<TableTiming>; holdMs?: number; command?: Command } | null = null;
   try {
     message = JSON.parse(data);
   } catch {
     // The game server reports malformed requests over the same JSON interface.
+  }
+  if (message?.exportGameState === true) {
+    if (debug && game) self.postMessage(JSON.stringify({ type: "debug-export", state: game.exportDebugState() }));
+    return;
   }
   if (typeof message?.debug === "boolean") {
     debug = message.debug;

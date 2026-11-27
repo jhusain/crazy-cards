@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import type { GameServer } from "@crazy-eights/game-server";
 import { CountdownFeedback, countdownBeat } from "./feedback.ts";
 import { setupInvitationLinks, setupPwa } from "./pwa.ts";
 import {
@@ -49,6 +50,7 @@ suitDialog.addEventListener("close", () => {
 const roundDialog = element<HTMLDialogElement>("round-dialog");
 const rulesDialog = element<HTMLDialogElement>("rules-dialog");
 const settingsDialog = element<HTMLDialogElement>("settings-dialog");
+const gameStateDialog = element<HTMLDialogElement>("game-state-dialog");
 const restartDialog = element<HTMLDialogElement>("restart-dialog");
 const replayButton = element<HTMLButtonElement>("replay-button");
 const restartButton = element<HTMLButtonElement>("restart-button");
@@ -439,6 +441,7 @@ function updateControls(): void {
   element("debug-controls").hidden = !debug || !!network;
   element("debug-settings").hidden = !debug || !!network;
   element<HTMLButtonElement>("debug-reshuffle").disabled = !canDebugShuffle();
+  element<HTMLButtonElement>("export-game-state").disabled = !debug || !!network || !view || !worker;
   element<HTMLButtonElement>("test-aggressiveness").disabled = !debug || !view || !inputReady();
   element<HTMLButtonElement>("test-aggressiveness-eight").disabled = !debug || !view || !inputReady();
   autoplayCheck.disabled = !view || !!view.matchResult || shuffleLocked();
@@ -795,6 +798,22 @@ function setupDialogs(): void {
   };
   element("test-aggressiveness").onclick = () => testAggressiveness(1);
   element("test-aggressiveness-eight").onclick = () => testAggressiveness(8);
+  element("export-game-state").onclick = () => {
+    if (!debug || network || !view || !worker) return;
+    worker.postMessage(JSON.stringify({ exportGameState: true }));
+  };
+  element("copy-game-state").onclick = async () => {
+    const json = element<HTMLTextAreaElement>("game-state-json");
+    const status = element("game-state-copy-status");
+    try {
+      await navigator.clipboard.writeText(json.value);
+      status.textContent = "Copied to clipboard.";
+    } catch {
+      json.focus();
+      json.select();
+      status.textContent = "Clipboard unavailable. Select and copy the JSON manually.";
+    }
+  };
   element("test-vibration").onclick = () => {
     if (!debug) return;
     const result = element("vibration-test-result");
@@ -1057,8 +1076,20 @@ function bindConnection(): void {
   const connection = worker!;
   connection.onmessage = ({ data }) => {
     if (worker !== connection) return;
+    const response = JSON.parse(data) as Response | { type: "debug-export"; state: ReturnType<GameServer["exportDebugState"]> };
+    if (response.type === "debug-export") {
+      if (!debug || network) return;
+      element<HTMLTextAreaElement>("game-state-json").value = JSON.stringify({
+        formatVersion: 1, exportedAt: new Date().toISOString(), mode: "ai",
+        game: response.state,
+        client: { staged, playCapacity, settings, deckBack, replaying },
+      }, null, 2);
+      element("game-state-copy-status").textContent = "";
+      if (!gameStateDialog.open) gameStateDialog.showModal();
+      return;
+    }
     if (replaying) replayController?.abort();
-    receive(JSON.parse(data) as Response);
+    receive(response);
   };
   connection.onerror = () => {
     if (worker !== connection) return;

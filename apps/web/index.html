@@ -179,6 +179,7 @@
         </fieldset>
         <fieldset id="debug-settings" class="flick-settings" hidden>
           <legend>Debug settings</legend>
+          <button id="export-game-state" type="button" aria-haspopup="dialog">Export game state</button>
           <button id="debug-reshuffle" class="quiet">Reshuffle deck</button>
           <button id="test-aggressiveness" type="button">Test aggressiveness</button>
           <button id="test-aggressiveness-eight" type="button">Test aggressiveness (8 opponent cards)</button>
@@ -186,6 +187,13 @@
           <p id="vibration-test-result" role="status" hidden></p>
         </fieldset>
       </div>
+    </dialog>
+    <dialog id="game-state-dialog" aria-labelledby="game-state-title">
+      <div class="dialog-heading"><h2 id="game-state-title">Game state</h2><button class="quiet" data-close>Close</button></div>
+      <p>A snapshot of this AI game. Deck and discard arrays run from bottom to top; the last deck card is drawn next. Seat 0 is you, seat 1 is the AI.</p>
+      <textarea id="game-state-json" aria-label="Game state JSON" readonly spellcheck="false"></textarea>
+      <button id="copy-game-state" type="button">Copy</button>
+      <p id="game-state-copy-status" role="status"></p>
     </dialog>
     <dialog id="restart-dialog" aria-labelledby="restart-title">
       <div class="dialog-heading"><h2 id="restart-title">Start a new match?</h2><button class="quiet" data-close>Cancel</button></div>
