@@ -832,7 +832,26 @@ function showDebugStatus(): void {
 
 function setupDebug(): void {
   let opponentPointer = "";
-  opponentHand.onpointerdown = event => { opponentPointer = event.pointerType; };
+  let lastTap: { time: number; x: number; y: number; pointerType: string } | undefined;
+  opponentHand.onpointerdown = event => {
+    if (!event.isPrimary) return;
+    opponentPointer = event.pointerType;
+    if (lastTap?.pointerType !== opponentPointer) lastTap = undefined;
+  };
+  opponentHand.onpointercancel = () => { lastTap = undefined; };
+  opponentHand.onpointerup = event => {
+    if (!event.isPrimary || event.pointerType === "mouse") return;
+    const now = performance.now();
+    const tappedTwice = lastTap?.pointerType === event.pointerType &&
+      now - lastTap.time <= 450 &&
+      Math.hypot(event.clientX - lastTap.x, event.clientY - lastTap.y) <= 30;
+    if (tappedTwice) {
+      lastTap = undefined;
+      toggleDebug();
+    } else {
+      lastTap = { time: now, x: event.clientX, y: event.clientY, pointerType: event.pointerType };
+    }
+  };
   opponentHand.ondblclick = () => { if (opponentPointer === "mouse") toggleDebug(); };
   element("debug-reshuffle").onclick = () => {
     if (canDebugShuffle()) send({ type: "debug-reshuffle" });
