@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { CountdownFeedback, countdownBeat } from "./feedback.ts";
-import { setupPwa } from "./pwa.ts";
+import { setupInvitationLinks, setupPwa } from "./pwa.ts";
 import {
   PLAY_SLOTS, canFollowInQueue, otherSeat, wildSuitOptions,
   type Card, type Command, type Request, type Response, type Suit, type TableView,
@@ -16,7 +16,7 @@ import { ANIMATION_SPEEDS, DEFAULT_SETTINGS, readSettings, type GameSettings } f
 import { CardTable } from "./table.ts";
 import { replayDelay, replaySpeed, STAGE_FLIGHT, tableAnimationTime, type TableTiming } from "./table-timing.ts";
 import { NetworkConnection, type GameConnection } from "./network.ts";
-import { invitationFromHash, invitationUrl, type Invitation } from "./network-protocol.ts";
+import { invitationUrl, type Invitation } from "./network-protocol.ts";
 import LocalServer from "./game.worker.ts?worker&inline";
 import "@fontsource/barlow-condensed/latin-700.css";
 import "@fontsource/barlow-condensed/latin-800.css";
@@ -89,6 +89,7 @@ let worker: GameConnection | undefined;
 let network: NetworkConnection | undefined;
 let networkReady = false;
 let networkGeneration = 0;
+let activeInvitation: Invitation | undefined;
 const networkDialog = element<HTMLDialogElement>("network-dialog");
 let scene: CardTable | undefined;
 let announcedResultRevision: number | undefined;
@@ -867,8 +868,13 @@ async function start(): Promise<void> {
     if (replaying) replayController?.abort();
     else void replayOpponent();
   };
+  let incomingInvitation: Invitation | undefined;
+  let tableReady = false;
+  setupInvitationLinks(invite => {
+    if (tableReady) void startNetwork(invite);
+    else incomingInvitation = invite;
+  });
   const [images] = await Promise.all([loadCardArt(), document.fonts.load("700 14px Barlow Condensed")]);
-  const incomingInvitation = invitationFromHash(location.hash);
   startLocal(false);
 
   const density = Math.min(window.devicePixelRatio || 1, 3);
@@ -880,6 +886,7 @@ async function start(): Promise<void> {
     powerPulse: (score, intensity) => feedback.powerPulse(score, intensity),
     stopPowerSounds: () => feedback.stopPowerSounds(),
     ready: () => {
+      tableReady = true;
       if (incomingInvitation) void startNetwork(incomingInvitation);
       else send({ type: "snapshot" });
     },
@@ -905,6 +912,7 @@ function resetSession(): void {
   worker?.terminate();
   worker = undefined;
   network = undefined;
+  activeInvitation = undefined;
   networkReady = false;
   view = undefined;
   deckDraw = undefined;
@@ -931,8 +939,12 @@ function startLocal(snapshot = true): void {
 }
 
 async function startNetwork(invite?: Invitation): Promise<void> {
+  // A launch can arrive through both hashchange and launchQueue. Join it once.
+  if (invite && network && activeInvitation && invite.room === activeInvitation.room &&
+    invite.password === activeInvitation.password && invite.host === activeInvitation.host) return;
   const generation = ++networkGeneration;
   resetSession();
+  activeInvitation = invite;
   debug = false;
   history.network = true;
   element("network-invitation").hidden = true;
@@ -953,6 +965,7 @@ async function startNetwork(invite?: Invitation): Promise<void> {
       },
       disconnected: text => {
         if (generation !== networkGeneration) return;
+        activeInvitation = undefined;
         networkReady = false;
         replayController?.abort();
         cancelAutomaticAction();
@@ -977,6 +990,7 @@ async function startNetwork(invite?: Invitation): Promise<void> {
     if (!invite) {
       const created = await connection.getInvitation();
       if (generation !== networkGeneration) return;
+      activeInvitation = created;
       element<HTMLInputElement>("network-link").value = invitationUrl(location.href, created);
       element("network-invitation").hidden = false;
       element("network-status").textContent = "Waiting for your opponent…";
@@ -984,6 +998,7 @@ async function startNetwork(invite?: Invitation): Promise<void> {
     updateControls();
   } catch (error) {
     if (generation !== networkGeneration) return;
+    activeInvitation = undefined;
     worker?.terminate();
     element("network-status").textContent = "Couldn’t start the connection. Check your internet connection and try again.";
     console.error(error);
