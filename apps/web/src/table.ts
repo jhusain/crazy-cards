@@ -46,7 +46,7 @@ type BoardState = {
 type Controls = {
   tapCard: (id: number) => void; flickCard: (id: number) => void;
   dropCards: (ids: number[], destination: "discard" | "play") => void;
-  beginDeckDraw: () => boolean; releaseDeckDraw: () => void; deckClick: () => void;
+  beginDeckDraw: () => boolean; releaseDeckDraw: (destination?: "discard" | "play") => void; deckClick: () => void;
   playQueue: () => void; clearPlay: () => void; ready: () => void; suitTick?: (sound: "tick" | "click") => void;
   fireRumble?: (durationMs: number) => void; stopFireRumble?: () => void;
   tableSlam?: (score: number, shakeMs: number) => void; stopImpactVibration?: () => void;
@@ -288,6 +288,9 @@ export class CardTable extends Phaser.Scene {
         previous.view.revision !== view.revision && !!view.event?.reshuffles?.length;
       const oldPpc = view.event?.reshuffles?.[0]?.pointsBefore ?? view.pointsPerCard;
       const backTexture = reshuffling ? this.art.rollBack(back, oldPpc, oldPpc, 1) : this.art.back(back, view.pointsPerCard);
+      if (this.stockDrawOrigin) {
+        this.priorCardPositions.set(this.stockDrawOrigin.id, this.stockDrawOrigin.position);
+      }
       const priorPositions = this.priorCardPositions;
       const priorShades = this.priorCardShades;
       const priorFlights = this.stagingFlights;
@@ -1052,17 +1055,21 @@ export class CardTable extends Phaser.Scene {
   }
 
   private dragDropRegion(): "discard" | "play" | undefined {
+    return this.dropRegion([...this.dragged.keys()].flatMap(id => {
+      const position = this.priorCardPositions.get(id);
+      return position ? [position] : [];
+    }));
+  }
+
+  private dropRegion(positions: readonly CardPosition[]): "discard" | "play" | undefined {
     const layout = this.priorLayout;
-    if (!layout || !this.dragged.size) return;
+    if (!layout || !positions.length) return;
     const discard = layout.piles.discard;
     const first = discard[0]!, last = discard.at(-1)!;
     const edge = last.x + last.width;
     const top = Math.min(...discard.map(card => card.y));
     const bottom = Math.max(...discard.map(card => card.y + artHeight(card.width)));
-    const cards = [...this.dragged.keys()].flatMap(id => {
-      const card = this.priorCardPositions.get(id);
-      return card ? [{ ...card, width: card.clipWidth ?? card.width, height: card.clipHeight ?? artHeight(card.width) }] : [];
-    });
+    const cards = positions.map(card => ({ ...card, width: card.clipWidth ?? card.width, height: card.clipHeight ?? artHeight(card.width) }));
     return cardDropRegion(cards,
       { x: first.x, y: top, width: edge - first.x, height: bottom - top },
       { x: edge, y: top, width: Math.max(0, layout.tableWidth - layout.inset - edge), height: bottom - top });
@@ -1086,7 +1093,7 @@ export class CardTable extends Phaser.Scene {
         if (event && updatePosition) track(event);
         drag.released = true;
         lastRelease = event?.timeStamp ?? performance.now();
-        this.controls.releaseDeckDraw();
+        this.controls.releaseDeckDraw(event && updatePosition ? this.dropRegion([drag.position]) : undefined);
       } else if (event && fallback === event.pointerId) {
         fallback = undefined;
         lastRelease = event.timeStamp;

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { GameServer } from "@crazy-eights/game-server";
 import { canFollowInQueue, wildSuitOptions, type Card, type TableView, type TurnEvent } from "@crazy-eights/protocol";
-import { cardDropRegion, coveredArea, flickPlayableCards, flickPlay, isCardDrag, isUpwardFlick, isVerticalFlick, queuedCardFlick } from "../src/card-gesture.ts";
+import { eligibleDrawDrop, cardDropRegion, coveredArea, flickPlayableCards, flickPlay, isCardDrag, isUpwardFlick, isVerticalFlick, queuedCardFlick } from "../src/card-gesture.ts";
 import { OpponentReplay } from "../src/opponent-replay.ts";
 import { isDebug } from "../src/play-mode.ts";
 import { ANIMATION_SPEEDS, DEFAULT_SETTINGS, readSettings } from "../src/settings.ts";
@@ -367,4 +367,19 @@ test("slow drops select the region with more actual group coverage", () => {
     { x: 80, y: 0, width: 20, height: 100 }, { x: 80, y: 0, width: 20, height: 100 }];
   assert.equal(coveredArea(group, discard), 2000);
   assert.equal(cardDropRegion(group, discard, play), "play");
+});
+
+test("drawn cards must be independently eligible for their drop destination", () => {
+  const card: Card = { id: 30, rank: 5, suit: "clubs", special: "normal" };
+  const skip: Card = { id: 49, rank: 11, suit: "spades", special: "skip" };
+  const five: Card = { id: 4, rank: 5, suit: "hearts", special: "normal" };
+  const view = { ...new GameServer().view(0), turn: 0 as const, hand: [card, skip, five], queuedCards: [], result: null, legalLeads: [card.id] };
+  assert.equal(eligibleDrawDrop(card, view, [], "discard"), "discard");
+  assert.equal(eligibleDrawDrop(card, view, [], "play"), "play");
+  assert.equal(eligibleDrawDrop(card, view, [skip], "play"), undefined);
+  assert.equal(eligibleDrawDrop(card, { ...view, legalLeads: [] }, [five], "discard"), undefined);
+  assert.equal(eligibleDrawDrop(card, { ...view, legalLeads: [] }, [five], "play"), "play");
+  assert.equal(eligibleDrawDrop(card, view, Array(12).fill(five), "play"), undefined);
+  assert.equal(eligibleDrawDrop(card, view, [], undefined), undefined);
+  assert.equal(eligibleDrawDrop(card, { ...view, hand: [] }, [], "discard"), undefined);
 });

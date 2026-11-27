@@ -6,7 +6,7 @@ import {
   type Card, type Command, type Request, type Response, type Suit, type TableView,
 } from "@crazy-eights/protocol";
 import { DECKS, SUIT_SYMBOL, loadCardArt, suitLabel } from "./cards.ts";
-import { flickPlay } from "./card-gesture.ts";
+import { eligibleDrawDrop, flickPlay } from "./card-gesture.ts";
 import { AutomaticActions, type AutomaticAction } from "./automatic-actions.ts";
 import { OpponentReplay } from "./opponent-replay.ts";
 import { roundProgress } from "./round-progress.ts";
@@ -40,7 +40,10 @@ const autoplayCheck = element<HTMLInputElement>("debug-autoplay");
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
 const suitDialog = element<HTMLDialogElement>("suit-dialog");
 suitDialog.addEventListener("close", () => {
-  if (busy === undefined) scene?.returnDraggedCards();
+  if (busy === undefined) {
+    scene?.returnDraggedCards();
+    if (pendingDrawDiscard) { pendingDrawDiscard = false; finishReceive(true); }
+  }
 });
 const roundDialog = element<HTMLDialogElement>("round-dialog");
 const rulesDialog = element<HTMLDialogElement>("rules-dialog");
@@ -90,10 +93,11 @@ const networkDialog = element<HTMLDialogElement>("network-dialog");
 let scene: CardTable | undefined;
 let announcedResultRevision: number | undefined;
 let paintedRevision: number | undefined;
-let deckDraw: { requestId?: number; released: boolean; response?: Response } | undefined;
+let deckDraw: { requestId?: number; released: boolean; response?: Response; destination?: "discard" | "play" } | undefined;
+let pendingDrawDiscard = false;
 
 function beginDeckDraw(): boolean {
-  if (!view || !canUseStock() || staged.length || view.drewThisTurn) return false;
+  if (!view || !canUseStock() || view.drewThisTurn) return false;
   deckDraw = { released: false };
   deckDraw.requestId = send({ type: "draw" });
   if (deckDraw.requestId === undefined) { deckDraw = undefined; return false; }
@@ -101,13 +105,12 @@ function beginDeckDraw(): boolean {
   return true;
 }
 
-function releaseDeckDraw(): void {
+function releaseDeckDraw(destination?: "discard" | "play"): void {
   if (!deckDraw) return;
   deckDraw.released = true;
+  deckDraw.destination = destination;
   if (deckDraw.response) {
-    const response = deckDraw.response;
-    deckDraw = undefined;
-    receive(response);
+    receive(deckDraw.response);
   }
 }
 
@@ -404,7 +407,7 @@ function updateControls(): void {
   const drew = view?.drewThisTurn && isMyTurn();
   stockPile.disabled = !deckDraw && !canUseStock() && !canDebugShuffle();
   discardPile.disabled = !canUseDiscard();
-  stockPile.setAttribute("aria-label", staged.length ? "Clear the queued cards"
+  stockPile.setAttribute("aria-label", staged.length && drew ? "Clear the queued cards"
     : drew ? "Pass your turn using the deck" : "Draw from the deck");
   stockPile.title = "Press to reveal a card; release to draw it";
   discardPile.setAttribute("aria-label", view?.result ? "Deal the next round" :
@@ -533,12 +536,16 @@ async function replayOpponent(): Promise<void> {
 }
 
 function receive(response: Response): void {
+  let drawDrop: { card: Card; destination: "discard" | "play" } | undefined;
+  pendingDrawDiscard = false;
   if (deckDraw && response.requestId === deckDraw.requestId) {
     const event = response.type === "state" && response.view.event?.kind === "draw" ? response.view.event : undefined;
     const id = event?.seat === response.view.seat ? event.drawnCards?.[0] : undefined;
     const card = response.view.hand.find(card => card.id === id);
     if (card) scene?.revealStockDraw(card);
     if (!deckDraw.released) { deckDraw.response = response; return; }
+    const destination = eligibleDrawDrop(card, response.view, staged, deckDraw.destination);
+    if (card && destination) drawDrop = { card, destination };
     deckDraw = undefined;
   }
   const acknowledged = response.requestId !== undefined && response.requestId === busy;
@@ -563,6 +570,23 @@ function receive(response: Response): void {
     staged = [];
   }
   if (!staged.length) playCapacity = 0;
+  message = response.type === "error" ? response.message : undefined;
+  if (drawDrop?.destination === "play") {
+    staged.push(drawDrop.card);
+    playCapacity = Math.max(playCapacity, view.visibleDiscard.length + staged.length);
+  } else if (drawDrop?.destination === "discard") {
+    // Keep the held card at release until the play response arrives, including a wild suit call.
+    // Painting the draw first would make it detour through the hand.
+    pendingDrawDiscard = true;
+    choosePlay([drawDrop.card], true);
+    if (busy === undefined && !suitDialog.open) { pendingDrawDiscard = false; finishReceive(true); }
+    return;
+  }
+  finishReceive(changed);
+}
+
+function finishReceive(changed: boolean): void {
+  if (!view) return;
   if (changed && !replaying) {
     clearTimeout(animationTimer);
     animationTimer = undefined;
@@ -574,7 +598,6 @@ function receive(response: Response): void {
       startAutomaticAction();
     }, duration);
   }
-  message = response.type === "error" ? response.message : undefined;
   render(changed);
   if (!animationTimer) startAutomaticAction();
 }
@@ -857,6 +880,7 @@ function resetSession(): void {
   networkReady = false;
   view = undefined;
   deckDraw = undefined;
+  pendingDrawDiscard = false;
   busy = pendingCommand = undefined;
   staged = [];
   playCapacity = 0;

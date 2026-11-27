@@ -1,4 +1,4 @@
-import type { Card } from "@crazy-eights/protocol";
+import { PLAY_SLOTS, canFollowInQueue, type Card, type TableView } from "@crazy-eights/protocol";
 import type { GameSettings } from "./settings.ts";
 
 export function isVerticalFlick(dx: number, dy: number, elapsed: number): boolean {
@@ -86,4 +86,16 @@ export function cardDropRegion(cards: readonly DropRect[], discard: DropRect, pl
   const discarded = coveredArea(cards, discard), staged = coveredArea(cards, play);
   if (!discarded && !staged) return;
   return discarded >= staged ? "discard" : "play";
+}
+
+// A deck drop moves just the drawn card; it never pulls matching cards out of the hand.
+export function eligibleDrawDrop(
+  card: Card | undefined, view: TableView, staged: readonly Card[], destination: DropRegion | undefined,
+): DropRegion | undefined {
+  if (!card || !destination || view.turn !== view.seat || view.result || view.queuedCards.length ||
+      !view.hand.some(held => held.id === card.id)) return;
+  if (destination === "discard") return view.legalLeads.includes(card.id) ? destination : undefined;
+  if (staged.length >= PLAY_SLOTS) return;
+  const last = staged.at(-1);
+  return (last ? canFollowInQueue(card, last) : view.legalLeads.includes(card.id)) ? destination : undefined;
 }

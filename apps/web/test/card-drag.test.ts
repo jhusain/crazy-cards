@@ -188,3 +188,24 @@ test("mouse double clicks flick hand cards and play staged groups without an ini
     assert.deepEqual(events, [staged ? "play" : "flick:17"]);
   }
 });
+
+test("deck releases use the same discard and play hitboxes, while cancellation goes to hand", () => {
+  for (const [x, expected] of [[70, "discard"], [240, "play"], [-100, undefined]] as const) {
+    const { scene, stock, pointer } = stockSetup();
+    const destinations: (string | undefined)[] = [];
+    scene.priorLayout = { tableWidth: 400, inset: 10, piles: { discard: [{ x: 150, y: 200, width: 100 }] } };
+    scene.controls.releaseDeckDraw = (destination?: string) => destinations.push(destination);
+    stock.onpointerdown(pointer(50, 200, 1000));
+    stock.onpointermove(pointer(x, 200, 1600));
+    stock.onpointerup(pointer(x, 200, 1800));
+    assert.deepEqual(destinations, [expected]);
+  }
+  const { scene, stock, pointer } = stockSetup();
+  scene.priorLayout = { tableWidth: 400, inset: 10, piles: { discard: [{ x: 150, y: 200, width: 100 }] } };
+  const destinations: (string | undefined)[] = [];
+  scene.controls.releaseDeckDraw = (destination?: string) => destinations.push(destination);
+  stock.onpointerdown(pointer(50, 200, 1000));
+  stock.onpointermove(pointer(160, 200, 1200));
+  stock.onpointercancel(pointer(160, 200, 1500));
+  assert.deepEqual(destinations, [undefined]);
+});
