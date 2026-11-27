@@ -57,3 +57,33 @@ export function flickPlay(
 export function isCardDrag(dx: number, dy: number, staged: boolean): boolean {
   return Math.abs(dy) >= 6 || staged && dx <= -6;
 }
+
+export interface DropRect { x: number; y: number; width: number; height: number }
+export type DropRegion = "discard" | "play";
+
+// Union the visible card coverage, so overlapping cards never count the same area twice.
+export function coveredArea(cards: readonly DropRect[], region: DropRect): number {
+  const clipped = cards.map(card => ({
+    left: Math.max(card.x, region.x), right: Math.min(card.x + card.width, region.x + region.width),
+    top: Math.max(card.y, region.y), bottom: Math.min(card.y + card.height, region.y + region.height),
+  })).filter(rect => rect.right > rect.left && rect.bottom > rect.top);
+  const edges = [...new Set(clipped.flatMap(rect => [rect.left, rect.right]))].sort((a, b) => a - b);
+  let area = 0;
+  for (let i = 1; i < edges.length; i++) {
+    const left = edges[i - 1]!, right = edges[i]!;
+    const intervals = clipped.filter(rect => rect.left < right && rect.right > left).sort((a, b) => a.top - b.top);
+    let bottom = -Infinity, height = 0;
+    for (const rect of intervals) {
+      height += Math.max(0, rect.bottom - Math.max(bottom, rect.top));
+      bottom = Math.max(bottom, rect.bottom);
+    }
+    area += (right - left) * height;
+  }
+  return area;
+}
+
+export function cardDropRegion(cards: readonly DropRect[], discard: DropRect, play: DropRect): DropRegion | undefined {
+  const discarded = coveredArea(cards, discard), staged = coveredArea(cards, play);
+  if (!discarded && !staged) return;
+  return discarded >= staged ? "discard" : "play";
+}

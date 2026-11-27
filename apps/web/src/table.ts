@@ -5,7 +5,8 @@ import { shuffleFrame } from "./shuffle-animation.ts";
 import { wildReel, wildReelSounds } from "./wild-reel.ts";
 import { arrivalProgress, slamDescent, slamFlight, slamPlayFlight, slamShadow, impactEnvelope, scatteredCard, tableShock } from "./play-impact.ts";
 import { chargePalette, chargePulseThresholds, powerCharge } from "./power-charge.ts";
-import { flickPlay, flickPlayableCards, isCardDrag, isUpwardFlick, queuedCardFlick, type FlickSettings } from "./card-gesture.ts";
+import { cardDropRegion, flickPlay, flickPlayableCards, isCardDrag, isUpwardFlick, queuedCardFlick, type FlickSettings } from "./card-gesture.ts";
+import { CardClicks } from "./card-click.ts";
 import {
   ART_HEIGHT, ART_WIDTH, CARD_DEPTH, HAND_FADE_WIDTH, PILE_STEP, artHeight, planTableLayout, opponentPositions, playLandingPositions,
   committedFromPlay, collapsePlayPositions, automaticActionPosition, replayPosition, stockLayerCount, tableLayout, type CardPosition, type QueuedPileSlots,
@@ -44,6 +45,8 @@ type BoardState = {
 };
 type Controls = {
   tapCard: (id: number) => void; flickCard: (id: number) => void;
+  dropCards: (ids: number[], destination: "discard" | "play") => void;
+  beginDeckDraw: () => boolean; releaseDeckDraw: () => void; deckClick: () => void;
   playQueue: () => void; clearPlay: () => void; ready: () => void; suitTick?: (sound: "tick" | "click") => void;
   fireRumble?: (durationMs: number) => void; stopFireRumble?: () => void;
   tableSlam?: (score: number, shakeMs: number) => void; stopImpactVibration?: () => void;
@@ -74,6 +77,9 @@ function between(from: CardPosition, to: CardPosition, t: number, lift = 0): Car
 export class CardTable extends Phaser.Scene {
   private art!: CardTextures;
   private state?: BoardState;
+  private cardClicks = new CardClicks();
+  private stockDrag?: { pointer: number; x: number; y: number; home: CardPosition; position: CardPosition; image: CardImage; card?: Card; released: boolean };
+  private stockDrawOrigin?: { id: number; position: CardPosition };
   private cardImages = new Map<number, CardImage>();
   private dragged = new Map<number, { image: CardImage; home: CardPosition; depth: number }>();
   private dragReturn?: Phaser.Tweens.Tween;
@@ -115,9 +121,10 @@ export class CardTable extends Phaser.Scene {
 
   create(): void {
     this.art = new CardTextures(this.textures, this.images, this.textureDensity);
+    this.bindStockGesture();
     this.cameras.main.setOrigin(0);
     const resize = () => {
-      if (this.deferResize) { this.resizePending = true; return; }
+      if (this.deferResize || this.stockDrag) { this.resizePending = true; return; }
       this.paint();
     };
     const observer = new ResizeObserver(() => {
@@ -130,6 +137,8 @@ export class CardTable extends Phaser.Scene {
       this.controls.stopImpactVibration?.();
       this.controls.stopPowerSounds?.();
       this.board.style.removeProperty("transform");
+      this.cardClicks.cancel();
+      this.controls.releaseDeckDraw();
       observer.disconnect();
       window.removeEventListener("resize", resize);
     });
@@ -147,6 +156,7 @@ export class CardTable extends Phaser.Scene {
   setLocked(locked: boolean): void {
     if (!this.state) return;
     this.state.locked = locked;
+    if (locked) this.cardClicks.cancel();
     const enabled = this.cardsEnabled(this.state.view);
     for (const button of this.cardTargets.querySelectorAll("button")) button.disabled = !enabled;
   }
@@ -158,6 +168,7 @@ export class CardTable extends Phaser.Scene {
       this.controls.stopFireRumble?.();
       this.controls.stopImpactVibration?.();
       this.controls.stopPowerSounds?.();
+      this.cardClicks.cancel();
       this.cancelPointer?.();
       this.cancelPointer = undefined;
       this.dragged.clear();
@@ -170,6 +181,7 @@ export class CardTable extends Phaser.Scene {
       delete this.board.dataset.wildReel;
       delete this.board.dataset.wildPhase;
       this.children.removeAll(true);
+      this.stockDrag = undefined;
       const { view, staged = [], back = 0 } = this.state ?? {};
       const stagedIds = new Set(staged.map(card => card.id));
       const committedIds = new Set(view?.queuedCards);
@@ -343,6 +355,7 @@ export class CardTable extends Phaser.Scene {
       const movingDraw = motion && !!priorRound && draw.count > 0;
       this.drawHand(handTargets, buttons, view, stock, priorPositions, priorShades, motion, adjusting, initialDeal,
         movingDraw ? draw : undefined, registerReflow);
+      this.stockDrawOrigin = undefined;
       if (reflow && returnFrames.length) {
         this.tween(reflow.start - reflow.landing, t => returnFrames.forEach(frame => frame(t)), undefined, reflow.landing);
       }
@@ -886,9 +899,11 @@ export class CardTable extends Phaser.Scene {
 
   private animateDraws(arrivals: Arrival[], stock: CardPosition, draw: DrawTimeline): void {
     if (!arrivals.length) return;
+    const origins = arrivals.map(({ id }) => this.stockDrawOrigin && id === this.stockDrawOrigin.id ? this.stockDrawOrigin.position : undefined);
+    if (origins.some(Boolean)) this.stockDrawOrigin = undefined;
     arrivals.forEach(({ image, position, id }, index) => {
-      this.moveCard(image, stock, position, 0, id);
-      image.setVisible(draw.cardStarts[index] === 0);
+      this.moveCard(image, origins[index] ?? stock, position, 0, id);
+      image.setVisible(!!origins[index] || draw.cardStarts[index] === 0);
     });
 
     const span = draw.total - draw.start;
@@ -898,7 +913,7 @@ export class CardTable extends Phaser.Scene {
         const age = elapsed + draw.start - draw.cardStarts[index]!;
         if (age < 0) return;
         image.setVisible(true);
-        this.moveCard(image, stock, position, arrivalProgress(age - draw.reveal, draw.duration), id, 14);
+        this.moveCard(image, origins[index] ?? stock, position, arrivalProgress(age - (origins[index] ? 0 : draw.reveal), draw.duration), id, 14);
       });
     }, undefined, draw.start, "Linear");
   }
@@ -955,6 +970,7 @@ export class CardTable extends Phaser.Scene {
   }
 
   private beginCardDrag(id: number, staged: boolean): void {
+    this.cardClicks.cancel();
     const state = this.state;
     if (!state) return;
     const remaining = state.view.hand.filter(card => !state.staged.some(queued => queued.id === card.id));
@@ -973,6 +989,7 @@ export class CardTable extends Phaser.Scene {
   private bindCardGesture(button: HTMLButtonElement, id: number, staged: boolean): void {
     let start: { x: number; y: number; time: number; pointer: number; dragging: boolean } | undefined;
     let suppressClick = false;
+    let pointerType = "touch";
     const cancel = () => {
       start = undefined;
       suppressClick = true;
@@ -984,6 +1001,7 @@ export class CardTable extends Phaser.Scene {
       this.cancelPointer?.();
       this.returnDraggedCards(true);
       suppressClick = false;
+      pointerType = event.pointerType;
       start = { x: event.clientX, y: event.clientY, time: event.timeStamp, pointer: event.pointerId, dragging: false };
       this.cancelPointer = cancel;
       if (event.isTrusted) button.setPointerCapture(event.pointerId);
@@ -1012,17 +1030,107 @@ export class CardTable extends Phaser.Scene {
       const elapsed = event.timeStamp - start.time;
       const gesture = staged ? queuedCardFlick(dx, dy, elapsed) : undefined;
       const flick = !staged && isUpwardFlick(dx, dy, elapsed);
+      const drop = start.dragging ? this.dragDropRegion() : undefined;
       suppressClick = start.dragging || Math.hypot(dx, dy) > 12;
       start = undefined;
       this.cancelPointer = undefined;
       if (gesture === "play") this.controls.playQueue();
       else if (gesture === "clear") this.controls.clearPlay();
       else if (flick) this.controls.flickCard(id);
+      else if (drop) this.controls.dropCards([...this.dragged.keys()], drop);
       else this.returnDraggedCards();
     };
     button.onclick = event => {
-      if (!suppressClick || event.detail === 0) this.controls.tapCard(id);
+      if (event.detail === 0) { this.controls.tapCard(id); return; }
+      if (!suppressClick) this.cardClicks.click(id, pointerType, event.timeStamp,
+        () => this.controls.tapCard(id),
+        () => {
+          if (this.state?.staged.some(card => card.id === id)) this.controls.playQueue();
+          else this.controls.flickCard(id);
+        });
     };
+  }
+
+  private dragDropRegion(): "discard" | "play" | undefined {
+    const layout = this.priorLayout;
+    if (!layout || !this.dragged.size) return;
+    const discard = layout.piles.discard;
+    const first = discard[0]!, last = discard.at(-1)!;
+    const edge = last.x + last.width;
+    const top = Math.min(...discard.map(card => card.y));
+    const bottom = Math.max(...discard.map(card => card.y + artHeight(card.width)));
+    const cards = [...this.dragged.keys()].flatMap(id => {
+      const card = this.priorCardPositions.get(id);
+      return card ? [{ ...card, width: card.clipWidth ?? card.width, height: card.clipHeight ?? artHeight(card.width) }] : [];
+    });
+    return cardDropRegion(cards,
+      { x: first.x, y: top, width: edge - first.x, height: bottom - top },
+      { x: edge, y: top, width: Math.max(0, layout.tableWidth - layout.inset - edge), height: bottom - top });
+  }
+
+  revealStockDraw(card: Card): void {
+    const drag = this.stockDrag;
+    if (!drag) return;
+    drag.image.destroy();
+    drag.image = this.drawImage(this.art.face(card), drag.position, CARD_DEPTH.staging + 100);
+    drag.card = card;
+    this.stockDrawOrigin = { id: card.id, position: { ...drag.position } };
+  }
+
+  private bindStockGesture(): void {
+    let lastRelease = -Infinity;
+    let fallback: number | undefined;
+    const release = (event?: PointerEvent, updatePosition = true) => {
+      const drag = this.stockDrag;
+      if (drag && !drag.released && (!event || drag.pointer === event.pointerId)) {
+        if (event && updatePosition) track(event);
+        drag.released = true;
+        lastRelease = event?.timeStamp ?? performance.now();
+        this.controls.releaseDeckDraw();
+      } else if (event && fallback === event.pointerId) {
+        fallback = undefined;
+        lastRelease = event.timeStamp;
+        this.controls.deckClick();
+      }
+    };
+    const track = (event: PointerEvent) => {
+      const drag = this.stockDrag;
+      if (!drag || drag.released || drag.pointer !== event.pointerId) return;
+      const bounds = this.board.getBoundingClientRect();
+      const dx = (event.clientX - drag.x) * this.board.clientWidth / bounds.width;
+      const dy = (event.clientY - drag.y) * this.board.clientHeight / bounds.height;
+      drag.position = { ...drag.home, x: drag.home.x + dx, y: drag.home.y + dy };
+      this.placeImage(drag.image, drag.position);
+      if (drag.card) this.stockDrawOrigin = { id: drag.card.id, position: { ...drag.position } };
+    };
+    this.stockButton.onpointerdown = event => {
+      if (!event.isPrimary || event.button !== 0 || event.timeStamp - lastRelease <= 450 || this.stockDrag) return;
+      this.cardClicks.cancel();
+      const home = this.priorStockPosition;
+      if (!home || !this.state) return;
+      // Create the preview before sending the request; replies may arrive on the next task.
+      const image = this.drawImage(this.art.back(this.state.back, this.state.view.pointsPerCard), home, CARD_DEPTH.staging + 100);
+      this.stockDrag = { pointer: event.pointerId, x: event.clientX, y: event.clientY, home: { ...home }, position: { ...home }, image, released: false };
+      if (!this.controls.beginDeckDraw()) {
+        image.destroy(); this.stockDrag = undefined;
+        fallback = event.pointerId;
+      }
+      if (event.isTrusted) this.stockButton.setPointerCapture(event.pointerId);
+    };
+    this.stockButton.onpointermove = track;
+    this.stockButton.onpointerup = release;
+    this.stockButton.onpointercancel = event => {
+      fallback = undefined;
+      release(event, false);
+    };
+    this.stockButton.onlostpointercapture = event => {
+      fallback = undefined;
+      release(event, false);
+    };
+    this.stockButton.onclick = event => { if (event.detail === 0) this.controls.deckClick(); };
+    const onBlur = () => release();
+    window.addEventListener("blur", onBlur);
+    this.events.once("shutdown", () => window.removeEventListener("blur", onBlur));
   }
 
   private positionButton(button: HTMLElement, position: CardPosition): void {

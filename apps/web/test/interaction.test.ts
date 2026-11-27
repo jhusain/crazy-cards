@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { GameServer } from "@crazy-eights/game-server";
 import { canFollowInQueue, wildSuitOptions, type Card, type TableView, type TurnEvent } from "@crazy-eights/protocol";
-import { flickPlayableCards, flickPlay, isCardDrag, isUpwardFlick, isVerticalFlick, queuedCardFlick } from "../src/card-gesture.ts";
+import { cardDropRegion, coveredArea, flickPlayableCards, flickPlay, isCardDrag, isUpwardFlick, isVerticalFlick, queuedCardFlick } from "../src/card-gesture.ts";
 import { OpponentReplay } from "../src/opponent-replay.ts";
 import { isDebug } from "../src/play-mode.ts";
 import { ANIMATION_SPEEDS, DEFAULT_SETTINGS, readSettings } from "../src/settings.ts";
@@ -354,4 +354,17 @@ test("drag tracking starts early with vertical intent, and also supports staged 
   assert(isCardDrag(-6, 0, true));
   assert(!isCardDrag(6, 0, true));
   assert(!isUpwardFlick(0, -6, 100));
+});
+
+test("slow drops select the region with more actual group coverage", () => {
+  const discard = { x: 0, y: 0, width: 100, height: 150 };
+  const play = { x: 100, y: 0, width: 200, height: 150 };
+  assert.equal(cardDropRegion([{ x: 30, y: 20, width: 100, height: 100 }], discard, play), "discard");
+  assert.equal(cardDropRegion([{ x: 70, y: 20, width: 100, height: 100 }], discard, play), "play");
+  assert.equal(cardDropRegion([{ x: 30, y: 200, width: 100, height: 100 }], discard, play), undefined);
+  // Repeated overlap on the left cannot outweigh a larger distinct area on the right.
+  const group = [{ x: 80, y: 0, width: 70, height: 100 }, { x: 80, y: 0, width: 20, height: 100 },
+    { x: 80, y: 0, width: 20, height: 100 }, { x: 80, y: 0, width: 20, height: 100 }];
+  assert.equal(coveredArea(group, discard), 2000);
+  assert.equal(cardDropRegion(group, discard, play), "play");
 });

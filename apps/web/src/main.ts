@@ -90,18 +90,29 @@ const networkDialog = element<HTMLDialogElement>("network-dialog");
 let scene: CardTable | undefined;
 let announcedResultRevision: number | undefined;
 let paintedRevision: number | undefined;
-let deckTapTimer: ReturnType<typeof setTimeout> | undefined;
-let lastDeckTap = { time: -Infinity, x: 0, y: 0 };
+let deckDraw: { requestId?: number; released: boolean; response?: Response } | undefined;
 
-function cancelDeckTap(): void {
-  clearTimeout(deckTapTimer);
-  deckTapTimer = undefined;
-  lastDeckTap.time = -Infinity;
+function beginDeckDraw(): boolean {
+  if (!view || !canUseStock() || staged.length || view.drewThisTurn) return false;
+  deckDraw = { released: false };
+  deckDraw.requestId = send({ type: "draw" });
+  if (deckDraw.requestId === undefined) { deckDraw = undefined; return false; }
+  scene?.setLocked(true);
+  return true;
+}
+
+function releaseDeckDraw(): void {
+  if (!deckDraw) return;
+  deckDraw.released = true;
+  if (deckDraw.response) {
+    const response = deckDraw.response;
+    deckDraw = undefined;
+    receive(response);
+  }
 }
 
 function send(command: Command): number | undefined {
   if (busy !== undefined || !worker || replaying || network && !networkReady) return;
-  cancelDeckTap();
   cancelAutomaticAction();
   pendingCommand = command;
   const request: Request = { requestId: ++requestId, revision: view?.revision ?? 0, command };
@@ -178,6 +189,25 @@ function flickCard(id: number): void {
     render(true);
   };
   commit(play);
+}
+
+function dropCards(ids: number[], destination: "discard" | "play"): void {
+  if (!view || !canUseStock()) { scene?.returnDraggedCards(); return; }
+  const cards = ids.flatMap(id => view!.hand.filter(card => card.id === id));
+  const fromPlay = ids.every(id => staged.some(card => card.id === id));
+  if (destination === "play" && fromPlay) { scene?.returnDraggedCards(); return; }
+  const combined = destination === "play" ? [...staged, ...cards] : cards;
+  if (!cards.length || combined.length > PLAY_SLOTS || validQueue(combined, view).length !== combined.length) {
+    scene?.returnDraggedCards();
+    return;
+  }
+  cancelAutomaticAction();
+  if (destination === "discard") choosePlay(combined);
+  else {
+    staged = combined;
+    playCapacity = Math.max(playCapacity, view.visibleDiscard.length + staged.length);
+    render(true);
+  }
 }
 
 function clearPlay(): void {
@@ -372,16 +402,17 @@ function announce(): void {
 
 function updateControls(): void {
   const drew = view?.drewThisTurn && isMyTurn();
-  stockPile.disabled = !canUseStock() && !canDebugShuffle();
+  stockPile.disabled = !deckDraw && !canUseStock() && !canDebugShuffle();
   discardPile.disabled = !canUseDiscard();
   stockPile.setAttribute("aria-label", staged.length ? "Clear the queued cards"
     : drew ? "Pass your turn using the deck" : "Draw from the deck");
-  stockPile.title = debug ? "Double-tap to reshuffle earlier discards" : "";
+  stockPile.title = "Press to reveal a card; release to draw it";
   discardPile.setAttribute("aria-label", view?.result ? "Deal the next round" :
     staged.length ? `Play ${staged.length} queued ${staged.length === 1 ? "card" : "cards"}`
       : debug && !autoplay ? "Play this turn using the AI" : drew ? "Pass your turn using the discard pile" : "Discard pile");
   element("debug-controls").hidden = !debug || !!network;
   element("debug-settings").hidden = !debug || !!network;
+  element<HTMLButtonElement>("debug-reshuffle").disabled = !canDebugShuffle();
   element<HTMLButtonElement>("test-aggressiveness").disabled = !debug || !view || !inputReady();
   element<HTMLButtonElement>("test-aggressiveness-eight").disabled = !debug || !view || !inputReady();
   autoplayCheck.disabled = !view || !!view.matchResult || shuffleLocked();
@@ -432,7 +463,7 @@ function showTable(snapshot: TableView, queue: Card[], animate: boolean, speed =
 }
 
 function render(animate: boolean): void {
-  if (!view || replaying) return;
+  if (!view || replaying || deckDraw) return;
   announce();
   updateControls();
   showTable(view, staged.slice(), animate);
@@ -502,6 +533,14 @@ async function replayOpponent(): Promise<void> {
 }
 
 function receive(response: Response): void {
+  if (deckDraw && response.requestId === deckDraw.requestId) {
+    const event = response.type === "state" && response.view.event?.kind === "draw" ? response.view.event : undefined;
+    const id = event?.seat === response.view.seat ? event.drawnCards?.[0] : undefined;
+    const card = response.view.hand.find(card => card.id === id);
+    if (card) scene?.revealStockDraw(card);
+    if (!deckDraw.released) { deckDraw.response = response; return; }
+    deckDraw = undefined;
+  }
   const acknowledged = response.requestId !== undefined && response.requestId === busy;
   const command = acknowledged ? pendingCommand : undefined;
   if (acknowledged) {
@@ -510,7 +549,6 @@ function receive(response: Response): void {
   }
   const changed = view?.revision !== response.view.revision;
   if (changed) {
-    cancelDeckTap();
     cancelAutomaticAction(false);
     canceledAutomaticRevision = undefined;
   }
@@ -729,7 +767,6 @@ function setAutoplay(enabled: boolean): void {
 function toggleDebug(): void {
   if (network) return;
   if (replaying || shuffleLocked()) return;
-  cancelDeckTap();
   debug = !debug;
   worker?.postMessage(JSON.stringify({ debug }));
   if (!debug && autoplay) setAutoplay(false);
@@ -742,44 +779,11 @@ function showDebugStatus(): void {
 }
 
 function setupDebug(): void {
-  let lastTouch = { time: -Infinity, x: 0, y: 0 };
-  let toggledAt = -Infinity;
-  opponentHand.onpointerup = event => {
-    if (event.pointerType === "mouse") return;
-    const now = performance.now();
-    if (now - lastTouch.time <= 450 && Math.hypot(event.clientX - lastTouch.x, event.clientY - lastTouch.y) <= 30) {
-      toggledAt = now;
-      lastTouch.time = -Infinity;
-      toggleDebug();
-    } else lastTouch = { time: now, x: event.clientX, y: event.clientY };
-  };
-  opponentHand.ondblclick = () => {
-    if (performance.now() - toggledAt > 500) toggleDebug();
-  };
-  const reshuffle = () => {
-    cancelDeckTap();
+  let opponentPointer = "";
+  opponentHand.onpointerdown = event => { opponentPointer = event.pointerType; };
+  opponentHand.ondblclick = () => { if (opponentPointer === "mouse") toggleDebug(); };
+  element("debug-reshuffle").onclick = () => {
     if (canDebugShuffle()) send({ type: "debug-reshuffle" });
-  };
-  // Defer debug single taps so the first half of a double tap never draws or clears a play.
-  stockPile.onpointerup = event => {
-    if (!canDebugShuffle()) return;
-    const now = performance.now();
-    const twice = now - lastDeckTap.time <= 450 &&
-      Math.hypot(event.clientX - lastDeckTap.x, event.clientY - lastDeckTap.y) <= 30;
-    cancelAutomaticAction();
-    if (twice) { reshuffle(); return; }
-    cancelDeckTap();
-    lastDeckTap = { time: now, x: event.clientX, y: event.clientY };
-    const revision = view?.revision;
-    worker?.postMessage(JSON.stringify({ holdMs: 450 }));
-    deckTapTimer = setTimeout(() => {
-      cancelDeckTap();
-      if (revision === view?.revision && !menu.matches(":popover-open") && !document.querySelector("dialog[open]")) drawOrPass();
-    }, 450);
-  };
-  stockPile.ondblclick = reshuffle;
-  stockPile.onclick = event => {
-    if (!debug || event.detail === 0) drawOrPass();
   };
   autoplayCheck.onchange = () => setAutoplay(autoplayCheck.checked);
 }
@@ -818,7 +822,7 @@ async function start(): Promise<void> {
 
   const density = Math.min(window.devicePixelRatio || 1, 3);
   scene = new CardTable(table, element("card-targets"), stockPile, discardPile, replayButton, automaticPanel, opponentHand, {
-    tapCard, flickCard, playQueue: confirmPlay, clearPlay, suitTick: sound => feedback.suitTick(sound),
+    tapCard, flickCard, dropCards, beginDeckDraw, releaseDeckDraw, deckClick: drawOrPass, playQueue: confirmPlay, clearPlay, suitTick: sound => feedback.suitTick(sound),
     fireRumble: duration => feedback.fireRumble(duration), stopFireRumble: () => feedback.stopFireRumble(),
     tableSlam: (score, shakeMs) => feedback.tableSlam(score, shakeMs),
     stopImpactVibration: () => feedback.stopImpactVibration(),
@@ -844,7 +848,6 @@ function resetSession(): void {
   replayController = undefined;
   replaying = false;
   replayShield.hidden = true;
-  cancelDeckTap();
   cancelAutomaticAction();
   clearTimeout(animationTimer);
   animationTimer = undefined;
@@ -853,6 +856,7 @@ function resetSession(): void {
   network = undefined;
   networkReady = false;
   view = undefined;
+  deckDraw = undefined;
   busy = pendingCommand = undefined;
   staged = [];
   playCapacity = 0;
@@ -900,6 +904,7 @@ async function startNetwork(invite?: Invitation): Promise<void> {
         networkReady = false;
         replayController?.abort();
         cancelAutomaticAction();
+        deckDraw = undefined;
         busy = pendingCommand = undefined;
         for (const dialog of document.querySelectorAll<HTMLDialogElement>("dialog[open]")) dialog.close();
         element("network-status").textContent = text;

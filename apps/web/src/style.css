@@ -204,7 +204,7 @@ button:disabled { cursor: default; }
   -webkit-tap-highlight-color: transparent;
   touch-action: pan-y;
 }
-.card-target.gesture-card { touch-action: none; }
+.card-target.gesture-card, #stock-pile { touch-action: none; }
 .replay-control {
   display: grid;
   place-items: center;
