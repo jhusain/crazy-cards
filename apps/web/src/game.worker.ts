@@ -33,7 +33,7 @@ function scheduleTurn(): void {
   if (suspended || paused || revision === undefined || !server) return;
   const move = server.automaticMove;
   // A voluntary draw leaves the decision to the client, including after its countdown is cancelled.
-  if (!move || move === "pass" && revision === manualDrawRevision) return;
+  if (!move || move === "draw" && !timing.autoPickupNoEligible || move === "pass" && revision === manualDrawRevision) return;
   const nextAt = move === "computer" ? animationEndsAt + timing.aiPauseMs :
     move === "queued" ? animationEndsAt + 80 :
       Math.max(animationEndsAt, changedAt + (move === "draw" ? 850 : 900));

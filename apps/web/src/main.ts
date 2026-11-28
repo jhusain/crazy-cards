@@ -667,7 +667,8 @@ function setupSettings(): void {
   const groupTwo = element<HTMLInputElement>("group-except-two");
   const automaticDelay = element<HTMLInputElement>("automatic-delay");
   const checks = {
-    autoStaged: "auto-staged", autoPass: "auto-pass", autoPickup: "auto-pickup", autoSingle: "auto-single",
+    autoStaged: "auto-staged", autoPass: "auto-pass", autoSingle: "auto-single",
+    autoPickupNoEligible: "auto-pickup-no-eligible", autoPickupSameEligible: "auto-pickup-same-eligible",
     autoSingleExcludeWild: "auto-single-exclude-wild", autoSingleExcludeTwo: "auto-single-exclude-two",
     autoSingleExcludeQueen: "auto-single-exclude-queen",
     autoSingleIgnoreExclusionsWhenOpponentEmpty: "auto-single-ignore-exclusions-when-opponent-empty",

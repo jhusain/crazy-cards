@@ -41,6 +41,34 @@ function setup(enabled = true) {
   return { context, tick, played, frames, block: (value: boolean) => { blocked = value; } };
 }
 
+for (const noEligible of [true, false]) {
+  test(`network auto pickup shows the full countdown with ${noEligible ? "no" : "unchanged"} eligible cards`, () => {
+    const { context, tick } = setup(false);
+    context.network = {};
+    const commands: string[] = [];
+    context.send = (command: { type: string }) => commands.push(command.type);
+    if (noEligible) {
+      context.settings.autoPickupNoEligible = true;
+      context.view.legalLeads = [];
+    } else {
+      context.settings.autoPickupSameEligible = true;
+      context.automaticActions.record(
+        { ...context.view, revision: 8, drewThisTurn: true },
+        { ...context.view, revision: 9, turn: 1, event: { kind: "pass", seat: 0 } },
+      );
+    }
+    context.startAutomaticAction();
+    assert.equal(context.automaticPanel.hidden, false);
+    assert.equal(context.element("automatic-title").textContent, "DRAW");
+    tick(100);
+    tick(3099);
+    assert.deepEqual(commands, []);
+    tick(3100);
+    assert.equal(context.automaticPanel.hidden, true);
+    assert.deepEqual(commands, ["draw"]);
+  });
+}
+
 test("staged autoplay is opt-in and survives settings reload", () => {
   for (const value of [undefined, {}, { autoStaged: "true" }]) assert.equal(readSettings(value).autoStaged, false);
   assert.equal(readSettings(JSON.parse(JSON.stringify({ ...DEFAULT_SETTINGS, autoStaged: true }))).autoStaged, true);

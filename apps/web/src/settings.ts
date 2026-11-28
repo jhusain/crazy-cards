@@ -16,7 +16,8 @@ export interface GameSettings {
   autoStaged: boolean;
   autoPass: boolean;
   automaticDelayMs: number;
-  autoPickup: boolean;
+  autoPickupNoEligible: boolean;
+  autoPickupSameEligible: boolean;
   autoSingle: boolean;
   autoSingleExcludeWild: boolean;
   autoSingleExcludeTwo: boolean;
@@ -30,7 +31,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   handSortingStrategy: "default",
   animationSpeed: .7, aiPauseMs: 1500, dangerWarning: true, dangerThreshold: 1, targetCardWidth: 240, keepGroupsTogether: true,
   groupExceptWild: true, groupExceptTwo: true, autoStaged: false, autoPass: false, automaticDelayMs: 3000,
-  autoPickup: false, autoSingle: false, autoSingleExcludeWild: false, autoSingleExcludeTwo: false,
+  autoPickupNoEligible: false, autoPickupSameEligible: false, autoSingle: false, autoSingleExcludeWild: false, autoSingleExcludeTwo: false,
   autoSingleExcludeQueen: false, autoSingleIgnoreExclusionsWhenOpponentEmpty: false, autoSingleSkips: false, dimUnplayable: false,
 };
 
@@ -40,9 +41,9 @@ export function readSettings(value: unknown): GameSettings {
     handSortingStrategy,
     animationSpeed, aiPauseMs, dangerWarning, dangerThreshold, targetCardWidth, keepGroupsTogether,
     groupExceptWild, groupExceptTwo, autoStaged, autoPass,
-    autoPickup, autoSingle, autoSingleExcludeWild, autoSingleExcludeTwo, autoSingleExcludeQueen, autoSingleIgnoreExclusionsWhenOpponentEmpty, autoSingleSkips, dimUnplayable,
+    autoPickupNoEligible, autoPickupSameEligible, autoSingle, autoSingleExcludeWild, autoSingleExcludeTwo, autoSingleExcludeQueen, autoSingleIgnoreExclusionsWhenOpponentEmpty, autoSingleSkips, dimUnplayable,
   } = value as Partial<GameSettings>;
-  const saved = value as Partial<GameSettings> & { autoPassDelayMs?: number };
+  const saved = value as Partial<GameSettings> & { autoPassDelayMs?: number; autoPickup?: boolean };
   const delay = saved.automaticDelayMs ?? saved.autoPassDelayMs;
   return {
     handSortingStrategy: handSortingStrategy === "wizard" || handSortingStrategy === "anupa" ? handSortingStrategy : "default",
@@ -62,7 +63,8 @@ export function readSettings(value: unknown): GameSettings {
     autoPass: typeof autoPass === "boolean" ? autoPass : DEFAULT_SETTINGS.autoPass,
     automaticDelayMs: typeof delay === "number" && delay >= 1000 && delay <= 10000 && delay % 1000 === 0
       ? delay : DEFAULT_SETTINGS.automaticDelayMs,
-    autoPickup: typeof autoPickup === "boolean" ? autoPickup : false,
+    autoPickupNoEligible: typeof autoPickupNoEligible === "boolean" ? autoPickupNoEligible : saved.autoPickup === true,
+    autoPickupSameEligible: typeof autoPickupSameEligible === "boolean" ? autoPickupSameEligible : saved.autoPickup === true,
     autoSingle: typeof autoSingle === "boolean" ? autoSingle : false,
     autoSingleExcludeWild: typeof autoSingleExcludeWild === "boolean" ? autoSingleExcludeWild : false,
     autoSingleExcludeTwo: typeof autoSingleExcludeTwo === "boolean" ? autoSingleExcludeTwo : false,

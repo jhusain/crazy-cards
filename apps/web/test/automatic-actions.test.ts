@@ -9,7 +9,7 @@ import { standardDeck } from "../../../packages/game-server/src/rules.ts";
 const card=(rank:number,suit:string)=>standardDeck().find(card=>card.rank===rank&&card.suit===suit)!;
 const snapshot=(changes:Partial<TableView>={}):TableView=>({...new GameServer().view(0),revision:1,turn:0,seat:0,
   hand:[card(6,"clubs"),card(4,"hearts")],visibleDiscard:[card(3,"clubs")],activeSuit:"clubs",legalLeads:[card(6,"clubs").id],...changes});
-const settings={...DEFAULT_SETTINGS,autoPass:true,autoPickup:true,autoSingle:true};
+const settings={...DEFAULT_SETTINGS,autoPass:true,autoPickupSameEligible:true,autoSingle:true};
 
 test("autopass needs an unplayable voluntary draw and an opponent with cards",()=>{
   const actions=new AutomaticActions();
@@ -22,24 +22,32 @@ test("autopass needs an unplayable voluntary draw and an opponent with cards",()
   assert.equal(actions.next({...after,revision:3},{...settings,autoSingle:false}),undefined);
 });
 
-test("auto pickup uses the previous passed choices and is invalidated by a penalty or play",()=>{
-  const actions=new AutomaticActions();
-  const passed=snapshot({drewThisTurn:true});
-  const after=snapshot({revision:2,turn:1,event:{seat:0,kind:"pass"}});
-  actions.record(passed,after,{type:"pass"});
-  const next=snapshot({revision:3,event:{seat:1,kind:"play"}});
-  actions.record(after,next);
-  assert.deepEqual(actions.next(next,{...settings,autoSingle:false}),{type:"draw"});
-  assert.equal(actions.next({...next,legalLeads:[...next.legalLeads,card(4,"hearts").id]},{...settings,autoSingle:false}),undefined);
-  const penalty={...next,revision:4,event:{seat:1 as const,kind:"play" as const,penalty:{seat:0 as const,count:2}}};
-  actions.record(next,penalty);
-  assert.equal(actions.next(penalty,{...settings,autoSingle:false}),undefined);
+test("repeat pickup requires exactly the same nonempty eligible set after drawing and passing", () => {
+  const actions = new AutomaticActions();
+  const six = card(6, "clubs").id, four = card(4, "hearts").id;
+  const passed = snapshot({ drewThisTurn: true, legalLeads: [six, four] });
+  const after = snapshot({ revision: 2, turn: 1, event: { seat: 0, kind: "pass" } });
+  const next = snapshot({ revision: 3, legalLeads: [four, six], event: { seat: 1, kind: "play" } });
+  const repeat = { ...DEFAULT_SETTINGS, autoPickupSameEligible: true };
+  actions.record(passed, after, { type: "pass" });
+  actions.record(after, next);
+  assert.deepEqual(actions.next(next, repeat), { type: "draw" });
+  assert.deepEqual(actions.next(next, repeat, true), { type: "draw" });
+  assert.equal(actions.next(next, { ...DEFAULT_SETTINGS, autoPickupNoEligible: true }, true), undefined);
+  assert.equal(actions.next({ ...next, legalLeads: [six] }, repeat, true), undefined);
+  assert.equal(actions.next({ ...next, legalLeads: [six, four, card(5, "clubs").id] }, repeat, true), undefined);
+  assert.equal(actions.next({ ...next, legalLeads: [] }, repeat, true), undefined);
+  const penalty = { ...next, revision: 4, event: { seat: 1 as const, kind: "play" as const, penalty: { seat: 0 as const, count: 2 } } };
+  actions.record(next, penalty);
+  assert.deepEqual(actions.next(penalty, repeat), { type: "draw" });
+  actions.record({ ...passed, revision: 5, drewThisTurn: false }, { ...after, revision: 6 });
+  assert.equal(actions.next({ ...next, revision: 7 }, repeat, true), undefined);
 });
 
 test("network Auto pickup handles a turn with no legal cards once", () => {
   const actions = new AutomaticActions();
   const before = snapshot({ legalLeads: [] });
-  const pickup = { ...DEFAULT_SETTINGS, autoPickup: true };
+  const pickup = { ...DEFAULT_SETTINGS, autoPickupNoEligible: true };
   assert.deepEqual(actions.next(before, pickup, true), { type: "draw" });
   assert.equal(actions.next(before, DEFAULT_SETTINGS, true), undefined);
   assert.equal(actions.next(before, pickup), undefined);

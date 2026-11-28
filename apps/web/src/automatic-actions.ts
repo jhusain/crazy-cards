@@ -42,7 +42,6 @@ export class AutomaticActions {
       return;
     }
     const event = after.event;
-    if (event.penalty?.seat === after.seat && event.penalty.count > 0) this.passedLeads = undefined;
     if (event.seat !== after.seat) return;
     if (event.kind === "play") this.passedLeads = undefined;
     if (event.kind === "pass") this.passedLeads = before.drewThisTurn ? new Set(before.legalLeads) : undefined;
@@ -59,10 +58,10 @@ export class AutomaticActions {
     if (settings.autoPass && view.opponentCount > 0 && view.drewThisTurn && this.passRevision === view.revision) {
       return { type: "pass" };
     }
-    if (settings.autoPickup && !view.drewThisTurn) {
-      if (!view.legalLeads.length) return network ? { type: "draw" } : undefined;
-      const passed = this.passedLeads;
-      if (passed && view.legalLeads.every(id => passed.has(id))) return { type: "draw" };
-    }
+    if (view.drewThisTurn) return;
+    if (!view.legalLeads.length) return network && settings.autoPickupNoEligible ? { type: "draw" } : undefined;
+    const passed = this.passedLeads;
+    if (settings.autoPickupSameEligible && passed?.size === view.legalLeads.length &&
+        view.legalLeads.every(id => passed.has(id))) return { type: "draw" };
   }
 }

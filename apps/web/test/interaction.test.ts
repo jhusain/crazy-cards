@@ -222,11 +222,12 @@ test("automatic action preferences default off, persist, and migrate the earlier
   const settings=readSettings({autoPickup:true,autoSingle:true,autoSingleExcludeWild:true,autoSingleExcludeTwo:true,
     autoSingleExcludeQueen:true,autoSingleSkips:true,dimUnplayable:true,automaticDelayMs:10000});
   assert.deepEqual(readSettings(JSON.parse(JSON.stringify(settings))),settings);
-  for(const key of ["autoPickup","autoSingle","autoSingleExcludeWild","autoSingleExcludeTwo","autoSingleExcludeQueen","autoSingleSkips","dimUnplayable"] as const){
+  for(const key of ["autoPickupNoEligible","autoPickupSameEligible","autoSingle","autoSingleExcludeWild","autoSingleExcludeTwo","autoSingleExcludeQueen","autoSingleSkips","dimUnplayable"] as const){
     assert.equal(DEFAULT_SETTINGS[key],false);
     assert.equal(settings[key],true);
     assert.equal(readSettings({[key]:"true"})[key],false);
   }
+  assert.equal(readSettings({autoPickup:true,autoPickupNoEligible:false}).autoPickupNoEligible,false);
   assert.equal(readSettings({autoPassDelayMs:5000}).automaticDelayMs,5000);
   assert.equal(readSettings({autoPassDelayMs:5000,automaticDelayMs:2000}).automaticDelayMs,2000);
 });
