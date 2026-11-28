@@ -41,7 +41,11 @@ export class NetworkConnection implements GameConnection {
   private socket?: WebSocket;
   private closed = false;
   private admitted = false;
-  private started = false;
+  private readonly credential: string;
+  private readonly invitation: Invitation;
+  private readonly host: boolean;
+  private readonly callbacks: Callbacks;
+  private readonly endpoint?: string;
   private waitingForState = false;
   private retryDeadline = 0;
   private retries = 0;
@@ -56,15 +60,22 @@ export class NetworkConnection implements GameConnection {
   });
 
   constructor(
-    private readonly invitation: Invitation,
-    private readonly host: boolean,
-    private readonly callbacks: Callbacks,
+    invitation: Invitation,
+    host: boolean,
+    callbacks: Callbacks,
     hostCredential?: string,
-    private readonly endpoint = import.meta.env.VITE_NETWORK_SERVER_URL as string | undefined,
+    endpoint = import.meta.env?.VITE_NETWORK_SERVER_URL as string | undefined,
   ) {
+    this.invitation = invitation;
+    this.host = host;
+    this.callbacks = callbacks;
+    this.endpoint = endpoint;
     void this.invitationReady.catch(() => {});
-    const credential = hostCredential ?? this.seatCredential();
-    queueMicrotask(() => this.connect(credential));
+    this.credential = hostCredential ?? this.seatCredential();
+    document.addEventListener("visibilitychange", this.resume);
+    window.addEventListener("online", this.resume);
+    window.addEventListener("pageshow", this.onPageShow);
+    queueMicrotask(() => this.connect());
   }
 
   getInvitation(): Promise<Invitation> {
@@ -84,7 +95,47 @@ export class NetworkConnection implements GameConnection {
     return random;
   }
 
-  private connect(credential: string): void {
+  private readonly onPageShow = (event: PageTransitionEvent): void => {
+    if (event.persisted) this.resume();
+  };
+
+  private readonly resume = (): void => {
+    if (this.closed || !this.admitted || document.visibilityState !== "visible") return;
+    this.retryDeadline = Date.now() + reconnectWindow;
+    this.retries = 0;
+    this.reconnect();
+  };
+
+  private reconnect(): void {
+    this.clearTransport();
+    this.callbacks.waiting("Connection interrupted. Reconnecting…");
+    this.connect();
+  }
+
+  private clearTransport(): void {
+    clearTimeout(this.timeout);
+    clearTimeout(this.retry);
+    const previous = this.socket;
+    this.socket = undefined;
+    previous?.close();
+    this.waitingForState = false;
+  }
+
+  private retryConnection(): void {
+    if (!this.admitted) {
+      this.fail("Couldn’t reach the network server. Check your connection and try again.");
+      return;
+    }
+    this.retryDeadline ||= Date.now() + reconnectWindow;
+    if (Date.now() >= this.retryDeadline) {
+      this.fail("Couldn’t reconnect to the match.");
+      return;
+    }
+    this.callbacks.waiting("Connection interrupted. Reconnecting…");
+    this.retry = setTimeout(() => this.connect(), Math.min(500 * 2 ** this.retries++, 5_000));
+  }
+
+  private connect(): void {
     if (this.closed) return;
     if (!this.endpoint) {
       this.fail("Network play is not configured for this build.");
@@ -94,13 +145,17 @@ export class NetworkConnection implements GameConnection {
     try {
       const url = new URL(`/rooms/${this.invitation.room}`, this.endpoint);
       const role = this.host ? "host" : "guest";
-      socket = new WebSocket(url, [NETWORK_PROTOCOL, role, credential, this.invitation.password]);
+      socket = new WebSocket(url, [NETWORK_PROTOCOL, role, this.credential, this.invitation.password]);
     } catch {
       this.fail("The network server address is invalid.");
       return;
     }
     this.socket = socket;
-    this.timeout = setTimeout(() => socket.close(), connectionTimeout);
+    this.timeout = setTimeout(() => {
+      if (this.socket !== socket) return;
+      this.clearTransport();
+      this.retryConnection();
+    }, connectionTimeout);
     socket.onopen = () => {
       if (this.closed || this.socket !== socket) return;
       const timing = this.timing ? JSON.parse(this.timing).timing : undefined;
@@ -114,15 +169,14 @@ export class NetworkConnection implements GameConnection {
         clearTimeout(this.timeout);
         this.retryDeadline = this.retries = 0;
         this.admitted = true;
-        if (this.host) storeHostedMatch({ ...this.invitation, credential });
+        if (this.host) storeHostedMatch({ ...this.invitation, credential: this.credential });
         this.resolveInvitation(this.invitation);
       } else if (message?.type === "presence" && typeof message.opponent === "boolean") {
         this.waitingForState = message.opponent;
-        if (!message.opponent && this.started) this.callbacks.waiting("Waiting for your opponent to reconnect…");
+        if (!message.opponent) this.callbacks.waiting("Waiting for your opponent…");
       } else if ((message?.type === "state" || message?.type === "error") && message.view) {
         if (this.waitingForState) {
           this.waitingForState = false;
-          this.started = true;
           this.callbacks.connected();
         }
         this.onmessage?.(new MessageEvent("message", { data }));
@@ -134,15 +188,9 @@ export class NetworkConnection implements GameConnection {
       if (event.code === 4001 || event.code === 4002) {
         if (this.host && event.code === 4001) storeHostedMatch();
         this.fail(event.reason || "This match is no longer available.");
-      } else if (this.admitted) {
-        this.retryDeadline ||= Date.now() + reconnectWindow;
-        if (Date.now() >= this.retryDeadline) this.fail("Couldn’t reconnect to the match.");
-        else {
-          this.callbacks.waiting("Connection interrupted. Reconnecting…");
-          this.retry = setTimeout(() => this.connect(credential), Math.min(500 * 2 ** this.retries++, 5_000));
-        }
       } else {
-        this.fail("Couldn’t reach the network server. Check your connection and try again.");
+        this.clearTransport();
+        this.retryConnection();
       }
     };
   }
@@ -164,10 +212,11 @@ export class NetworkConnection implements GameConnection {
   terminate(): void {
     if (this.closed) return;
     this.closed = true;
-    clearTimeout(this.timeout);
-    clearTimeout(this.retry);
+    document.removeEventListener("visibilitychange", this.resume);
+    window.removeEventListener("online", this.resume);
+    window.removeEventListener("pageshow", this.onPageShow);
+    this.clearTransport();
     this.rejectInvitation(new Error("Connection closed."));
-    this.socket?.close();
   }
 
   leaveMatch(): void {
