@@ -89,6 +89,7 @@ export function computerMove(
   opponentCount: number,
   top: PlayedCard,
   drewThisTurn: boolean,
+  mustPlay = false,
 ): { hand: Card[]; move: Move } {
   let ordered = sortHand(hand);
   const suit = activeSuit(top);
@@ -103,7 +104,7 @@ export function computerMove(
   const promoted = [...matchingSkips, ...matchingReverses];
   ordered = [...ordered.filter(card => !promoted.includes(card)), ...promoted];
 
-  let candidates = ordered.filter(card => canLead(card, top) && !(card.special === "wild" && card.suit === suit));
+  let candidates = ordered.filter(card => canLead(card, top) && (mustPlay || !(card.special === "wild" && card.suit === suit)));
   if (top.special === "pickup" && candidates.some(card => card.special === "pickup")) {
     candidates = candidates.filter(card => card.special === "pickup");
   }

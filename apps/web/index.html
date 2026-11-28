@@ -42,6 +42,7 @@
           <button class="card-target opponent-target" id="opponent-hand" aria-label="Opponent’s hand. Double-tap to toggle debug mode" hidden></button>
           <span id="deck-value" class="visually-hidden">1 point per card</span>
           <div id="card-targets"></div>
+          <div id="must-play-toast" class="debug-toast hand-limit-toast must-play-toast" role="status" aria-live="polite" hidden></div>
           <div id="hand-limit-toast" class="debug-toast hand-limit-toast" role="status" aria-live="polite" hidden></div>
           <div id="debug-toast" class="debug-toast" role="status" aria-live="polite" hidden></div>
           <div id="table-notice" class="table-notice" hidden>
@@ -95,6 +96,7 @@
         <li>Your queued play sits to the right of the last play, separated by a gap. Tap the last play or swipe a queued card up or left to play it. Tap a queued card to return it to your hand; flick down to clear the queue.</li>
         <li><b>Aces and jacks</b> skip the opponent. <b>Twos</b> make them draw two per card in the stack, and the <b>queen of spades</b> makes them draw five. A special effect can be covered by an ordinary card in the combo. After an ace or jack, you can queue another play that matches the suit of the last card.</li>
         <li>Press the deck to reveal and commit a draw, then release onto the discard or staging area to add it there if eligible. Otherwise it goes into your hand. You can also flick down or drag it into the hand. A revealed card cannot be put back. Drawing keeps any staged play. After drawing, tap the deck to clear a queue, or tap either pile to pass when the queue is empty. In debug mode, use “Reshuffle deck” in Settings to reshuffle earlier discards. Tapping the table does nothing. The table draws for you when you have no legal play and passes if you still can’t play.</li>
+        <li>If your opponent has no playable cards and cannot draw (their hand is full or there are no cards left to draw or reshuffle), you must play if you can. You cannot draw or pass until you play. This is checked again each turn.</li>
         <li>Hands hold at most <b>26 cards</b>, including penalty pickups. Drawing at the limit shows a warning: play or pass. Trying to draw again that turn passes without picking up.</li>
         <li>On your turn, with no cards queued, tap the <b>Instant Replay</b> icon to see the last sequence at half speed, including forced draws and passes when you could not play. Tap anywhere or use the fast-forward icon to return to the game.</li>
         <li>Going out only wins when your turn comes back. If you both go out, the round is a tie. The deck shows the points per card: reshuffling the discard doubles it. A tie doubles the next round’s starting value. Points per card are capped at 16. A decisive round resets the next round’s starting value to one. The winner gains the current points per card for each opposing card left, and the loser gives up the same number. A match ends after three decisive rounds; the higher total score wins.</li>

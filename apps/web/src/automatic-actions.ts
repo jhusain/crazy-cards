@@ -55,6 +55,7 @@ export class AutomaticActions {
     if (view.result || view.turn !== view.seat || view.queuedCards.length) return;
     const cards = automaticPlay(view, settings);
     if (cards) return { type: "play", cards };
+    if (view.mustPlayReason) return;
     if (settings.autoPass && view.opponentCount > 0 && view.drewThisTurn && this.passRevision === view.revision) {
       return { type: "pass" };
     }

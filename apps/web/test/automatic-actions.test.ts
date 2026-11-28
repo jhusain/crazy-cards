@@ -198,3 +198,16 @@ test("the empty-opponent override ignores every exclusion only when enabled", ()
     assert.equal(automaticPlay(view, { ...enabled, autoSingle: false }), undefined);
   }
 });
+
+test("must-play prevents automatic pickup and passing while retaining automatic legal plays", () => {
+  const actions = new AutomaticActions();
+  const before = snapshot({ drewThisTurn: true });
+  const passed = snapshot({ revision: 2, turn: 1, event: { seat: 0, kind: "pass" } });
+  actions.record(before, passed, { type: "pass" });
+  const next = snapshot({ revision: 3, mustPlayReason: "opponent-hand-full" });
+  assert.equal(actions.next(next, { ...settings, autoSingle: false }), undefined);
+  assert.deepEqual(actions.next(next, settings), { type: "play", cards: [next.hand[0]] });
+  const drawn = { ...next, revision: 4, drewThisTurn: true, event: { seat: 0 as const, kind: "draw" as const, drawnCards: [card(4, "hearts").id] } };
+  actions.record(next, drawn, { type: "draw" });
+  assert.equal(actions.next(drawn, { ...settings, autoSingle: false }), undefined);
+});

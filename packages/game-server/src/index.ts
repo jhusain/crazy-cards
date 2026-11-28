@@ -140,6 +140,15 @@ export class GameServer {
     return true;
   }
 
+  private mustPlayReason(seat: Seat): TableView["mustPlayReason"] {
+    if (this.result || this.turn !== seat || !this.hands[seat].some(card => canLead(card, this.top))) return null;
+    const opponent = this.hands[otherSeat(seat)];
+    // An empty opponent hand is the end-of-round response window, not a stalled player.
+    if (!opponent.length || opponent.some(card => canLead(card, this.top))) return null;
+    if (opponent.length >= MAX_HAND_CARDS) return "opponent-hand-full";
+    return this.stock.length === 0 && this.discard.length === 0 ? "deck-exhausted" : null;
+  }
+
   view(seat: Seat): TableView {
     const drawSeat = this.event?.kind === "draw" ? this.event.seat : this.event?.penalty?.seat;
     const event = this.event && drawSeat !== seat && this.event.drawnCards
@@ -156,7 +165,7 @@ export class GameServer {
       stockCount: this.stock.length, lastPlay: this.lastPlay.slice(),
       visibleDiscard: this.lastPlay.slice(-this.lastPlaySize), activeSuit: activeSuit(this.top),
       drewThisTurn: this.drewThisTurn, event, result: this.result,
-      queuedCards,
+      queuedCards, mustPlayReason: this.mustPlayReason(seat),
       legalLeads: this.turn === seat && !this.result
         ? this.hands[seat].filter(card => canLead(card, this.top)).map(card => card.id)
         : [],
@@ -193,7 +202,7 @@ export class GameServer {
   stepComputer(): boolean {
     if (!this.cpuIsUp) return false;
     const seat = this.turn;
-    const { hand, move } = computerMove(this.hands[seat], this.hands[otherSeat(seat)].length, this.top, this.drewThisTurn);
+    const { hand, move } = computerMove(this.hands[seat], this.hands[otherSeat(seat)].length, this.top, this.drewThisTurn, !!this.mustPlayReason(seat));
     this.hands[seat] = hand;
     this.move(seat, move);
     return true;
@@ -250,7 +259,7 @@ export class GameServer {
       this.revision++;
     } else if (command.type === "auto-play") {
       if (this.result || this.turn !== seat) throw new Error("It’s not your turn.");
-      const decision = computerMove(this.hands[seat], this.hands[otherSeat(seat)].length, this.top, this.drewThisTurn);
+      const decision = computerMove(this.hands[seat], this.hands[otherSeat(seat)].length, this.top, this.drewThisTurn, !!this.mustPlayReason(seat));
       this.hands[seat] = decision.hand;
       this.move(seat, decision.move);
     } else if (command.type === "play-queue") {
@@ -351,6 +360,9 @@ export class GameServer {
 
   private move(seat: Seat, move: Move): void {
     if (this.result || this.turn !== seat) throw new Error("It’s not your turn.");
+    if (move.type !== "play" && this.mustPlayReason(seat)) {
+      throw new Error("You must play: your opponent has no playable cards and cannot draw. Play a card to keep the game moving.");
+    }
     if (move.type === "play") {
       this.play(seat, move.cards, move.suit);
     } else if (move.type === "draw") {

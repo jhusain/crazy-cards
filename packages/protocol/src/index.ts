@@ -69,6 +69,8 @@ export interface TableView {
   visibleDiscard: PlayedCard[];
   activeSuit: Suit;
   drewThisTurn: boolean;
+  /** Only the active seat receives the reason it must play to unblock its opponent. */
+  mustPlayReason: "opponent-hand-full" | "deck-exhausted" | null;
   legalLeads: number[];
   queuedCards: number[];
   event: TurnEvent | null;

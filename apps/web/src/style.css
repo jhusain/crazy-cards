@@ -462,3 +462,6 @@ dialog p { font-size: 14px; line-height: 1.45; }
   bottom: max(24px, env(safe-area-inset-bottom)); left: auto; transform: none;
   max-width: min(360px, calc(100vw - 32px)); white-space: normal;
 }
+
+/* Remains visible throughout a blocked-opponent turn without intercepting card gestures. */
+.must-play-toast { pointer-events: none; line-height: 1.4; }

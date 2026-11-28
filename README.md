@@ -89,3 +89,5 @@ The hosted game is an installable PWA with 192/512-pixel icons, a standalone man
 With Sound enabled, a short mechanical tick accompanies each suit departing its centered position downward. A slightly lower click marks each halfway resistance crossing, including the final tip forward or recoil. All three suit positions share one sound per crossing; the balance pause and final hold are silent.
 
 Hand rows reserve only the scaled top-left face/suit height plus spacing, allowing the solver to add rows and reach the target card width. Full card bodies may extend behind the next row and fade at the bottom, while the corner regions remain unobscured at rest.
+
+If the opponent has no legal play and cannot draw because their hand is full or both stock and recyclable discards are empty, the active player must play if able. Drawing and passing are rejected until a legal play is made; the condition is reevaluated each turn. A persistent notice explains the restriction to the active player. Strategic drawing remains available while the opponent can play or draw.

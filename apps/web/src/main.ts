@@ -101,7 +101,7 @@ let deckDraw: { requestId?: number; released: boolean; response?: Response; dest
 let pendingDrawDiscard = false;
 
 function beginDeckDraw(): boolean {
-  if (!view || !canUseStock() || view.drewThisTurn &&
+  if (!view || view.mustPlayReason || !canUseStock() || view.drewThisTurn &&
       (view.hand.length < MAX_HAND_CARDS || view.event?.handLimitReached)) return false;
   deckDraw = { released: false };
   deckDraw.requestId = send({ type: "draw" });
@@ -251,6 +251,7 @@ function drawOrPass(): void {
     clearPlay();
     return;
   }
+  if (view.mustPlayReason) return;
   send({ type: view.drewThisTurn && (view.hand.length < MAX_HAND_CARDS || view.event?.handLimitReached) ? "pass" : "draw" });
 }
 
@@ -419,6 +420,8 @@ function announce(): void {
   const penalty = view.event?.penalty;
   if (isQueued()) {
     status.textContent = "Playing your queue";
+  } else if (view.mustPlayReason && !autoplay) {
+    status.textContent = "You must play: your opponent cannot play or draw.";
   } else if (penalty?.count) {
     status.textContent = `${penalty.seat === view.seat ? autoplay ? "Player AI draws" : "You draw" : `${rival} draws`} ${penalty.count}. ${turn}`;
   } else if (!autoplay && isMyTurn() && !view.legalLeads.length) {
@@ -429,12 +432,19 @@ function announce(): void {
 }
 
 function updateControls(): void {
+  const mustPlayToast = element("must-play-toast");
+  const mustPlayMessage = view?.mustPlayReason === "opponent-hand-full"
+    ? "You must play. Your opponent has no playable cards and their hand is full, so they cannot draw. Drawing and passing are unavailable until you play."
+    : "You must play. Your opponent has no playable cards and there are no cards left to draw or reshuffle. Drawing and passing are unavailable until you play.";
+  const showMustPlay = !!view?.mustPlayReason && !autoplay && !replaying;
+  if (showMustPlay && mustPlayToast.textContent !== mustPlayMessage) mustPlayToast.textContent = mustPlayMessage;
+  mustPlayToast.hidden = !showMustPlay;
   const drew = view?.drewThisTurn && isMyTurn();
-  stockPile.disabled = !deckDraw && !canUseStock() && !canDebugShuffle();
+  stockPile.disabled = !!view?.mustPlayReason && !staged.length || !deckDraw && !canUseStock() && !canDebugShuffle();
   discardPile.disabled = !canUseDiscard();
   stockPile.setAttribute("aria-label", staged.length && drew ? "Clear the queued cards"
     : drew ? "Pass your turn using the deck" : "Draw from the deck");
-  stockPile.title = "Press to reveal a card; release to draw it";
+  stockPile.title = view?.mustPlayReason ? mustPlayMessage : "Press to reveal a card; release to draw it";
   discardPile.setAttribute("aria-label", view?.result ? "Deal the next round" :
     staged.length ? `Play ${staged.length} queued ${staged.length === 1 ? "card" : "cards"}`
       : debug && !autoplay ? "Play this turn using the AI" : drew ? "Pass your turn using the discard pile" : "Discard pile");
