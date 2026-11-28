@@ -4,18 +4,6 @@ import { ART_WIDTH as CARD_WIDTH, ART_HEIGHT as CARD_HEIGHT } from "./table-layo
 import { BACK_INNER_TOP, BACK_INNER_BOTTOM, pointRollOffsets } from "./shuffle-animation.ts";
 import { suitInk, wildReelFrame, wildReelInk, type WildReel } from "./wild-reel.ts";
 
-const imports = import.meta.glob<string>("./art/*.gif", { eager: true, import: "default", query: "?inline" });
-const art = (file: string) => imports[`./art/${file}.gif`]!;
-
-export const DECKS: { name: string; art?: string }[] = [
-  { name: "House pattern" }, { name: "Tinker’s Dream", art: art("Tinker's Dream") },
-  { name: "Anna", art: art("anna") }, { name: "Dad", art: art("dad") },
-  { name: "Hash", art: art("hash") }, { name: "Jay", art: art("jay") },
-  { name: "Kravitz", art: art("kravitz") }, { name: "Leaf", art: art("leaf") },
-  { name: "Peace", art: art("peace") }, { name: "Viscious", art: art("viscious") },
-  { name: "Zozo", art: art("zozo") },
-];
-
 export const SUIT_SYMBOL: Record<Suit, string> = { hearts: "♥", diamonds: "♦", clubs: "♣", spades: "♠" };
 export const SPECIAL_LABEL: Record<Special, string> = {
   normal: "", reverse: "SKIP", skip: "SKIP", pickup: "+2", "super-pickup": "+5", wild: "WILD",
@@ -32,22 +20,6 @@ export interface FaceTexture {
   paper: string;
   grayPaper: string;
   ink: string;
-}
-
-export async function loadCardArt(): Promise<{ backs: (HTMLImageElement | null)[] }> {
-  const icon = document.createElement("link");
-  icon.rel = "icon";
-  icon.href = art("icon");
-  document.head.append(icon);
-
-  const load = async (source: string) => {
-    const image = new Image();
-    image.src = source;
-    await image.decode();
-    return image;
-  };
-  const backs = await Promise.all(DECKS.map(deck => deck.art ? load(deck.art) : null));
-  return { backs };
 }
 
 function rounded(context: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
@@ -69,7 +41,6 @@ export class CardTextures {
 
   constructor(
     private readonly textures: Phaser.Textures.TextureManager,
-    private readonly art: Awaited<ReturnType<typeof loadCardArt>>,
     private readonly density: number,
   ) {}
 
@@ -137,19 +108,19 @@ export class CardTextures {
     ctx.drawImage(band, x - width / 2, y - height / 2, width, height);
   }
 
-  back(index: number, pointsPerCard: number): string {
-    const key = `back:${index}:${pointsPerCard}`;
-    if (!this.textures.exists(key)) this.paintBack(key, index, pointsPerCard, pointsPerCard, 1);
+  back(pointsPerCard: number): string {
+    const key = `back:${pointsPerCard}`;
+    if (!this.textures.exists(key)) this.paintBack(key, pointsPerCard, pointsPerCard, 1);
     return key;
   }
 
-  rollBack(index: number, from: number, to: number, progress: number): string {
-    const key = `back-roll:${index}`;
-    this.paintBack(key, index, from, to, progress);
+  rollBack(from: number, to: number, progress: number): string {
+    const key = "back-roll";
+    this.paintBack(key, from, to, progress);
     return key;
   }
 
-  private paintBack(key: string, index: number, from: number, to: number, progress: number): void {
+  private paintBack(key: string, from: number, to: number, progress: number): void {
     const texture = this.textures.exists(key) ? this.textures.get(key) as Phaser.Textures.CanvasTexture :
       this.textures.createCanvas(key, CARD_WIDTH * this.density, CARD_HEIGHT * this.density)!;
     this.generated.add(key);
@@ -157,7 +128,7 @@ export class CardTextures {
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, CARD_WIDTH * this.density, CARD_HEIGHT * this.density);
-    ctx.drawImage(this.textures.get(this.backPaper(index)).getSourceImage() as CanvasImageSource, 0, 0);
+    ctx.drawImage(this.textures.get(this.backPaper()).getSourceImage() as CanvasImageSource, 0, 0);
     ctx.scale(this.density, this.density);
     ctx.beginPath();
     ctx.rect(14, BACK_INNER_TOP, CARD_WIDTH - 28, BACK_INNER_BOTTOM - BACK_INNER_TOP);
@@ -182,8 +153,8 @@ export class CardTextures {
     texture.refresh();
   }
 
-  private backPaper(index: number): string {
-    const key = `back-paper:${index}`;
+  private backPaper(): string {
+    const key = "back-paper";
     if (this.textures.exists(key)) return key;
     const texture = this.textures.createCanvas(key, CARD_WIDTH * this.density, CARD_HEIGHT * this.density)!;
     this.generated.add(key);
@@ -193,28 +164,22 @@ export class CardTextures {
     rounded(ctx, 8, 8, CARD_WIDTH - 16, CARD_HEIGHT - 16, 10);
     ctx.save();
     ctx.clip();
-    const original = this.art.backs[index];
-    if (original) {
-      ctx.imageSmoothingEnabled = false;
-      ctx.drawImage(original, 8, 8, CARD_WIDTH - 16, CARD_HEIGHT - 16);
-    } else {
-      ctx.fillStyle = "#1b3942";
-      ctx.fillRect(8, 8, CARD_WIDTH - 16, CARD_HEIGHT - 16);
-      ctx.fillStyle = "#395855";
-      for (let y = 14; y < CARD_HEIGHT; y += 12) {
-        for (let x = 10 + (y % 24 === 14 ? 0 : 6); x < CARD_WIDTH; x += 12) {
-          ctx.save();
-          ctx.translate(x, y);
-          ctx.rotate(Math.PI / 4);
-          ctx.fillRect(-2.3, -2.3, 4.6, 4.6);
-          ctx.restore();
-        }
+    ctx.fillStyle = "#1b3942";
+    ctx.fillRect(8, 8, CARD_WIDTH - 16, CARD_HEIGHT - 16);
+    ctx.fillStyle = "#395855";
+    for (let y = 14; y < CARD_HEIGHT; y += 12) {
+      for (let x = 10 + (y % 24 === 14 ? 0 : 6); x < CARD_WIDTH; x += 12) {
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(Math.PI / 4);
+        ctx.fillRect(-2.3, -2.3, 4.6, 4.6);
+        ctx.restore();
       }
-      ctx.strokeStyle = "#ccab6a";
-      ctx.lineWidth = 1.5;
-      rounded(ctx, 14, 14, CARD_WIDTH - 28, CARD_HEIGHT - 28, 7);
-      ctx.stroke();
     }
+    ctx.strokeStyle = "#ccab6a";
+    ctx.lineWidth = 1.5;
+    rounded(ctx, 14, 14, CARD_WIDTH - 28, CARD_HEIGHT - 28, 7);
+    ctx.stroke();
     ctx.fillStyle = "#213840";
     ctx.fillRect(27, 42, CARD_WIDTH - 54, 107);
     ctx.restore();

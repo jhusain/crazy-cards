@@ -6,7 +6,7 @@ import {
   MAX_HAND_CARDS, PLAY_SLOTS, canFollowInQueue, otherSeat, wildSuitOptions,
   type Card, type Command, type Request, type Response, type Suit, type TableView,
 } from "@crazy-eights/protocol";
-import { DECKS, SUIT_SYMBOL, loadCardArt, suitLabel } from "./cards.ts";
+import { SUIT_SYMBOL, suitLabel } from "./cards.ts";
 import { eligibleDrawDrop, flickPlay, retainedFlickPlay } from "./card-gesture.ts";
 import { AutomaticActions, type AutomaticAction } from "./automatic-actions.ts";
 import { OpponentReplay } from "./opponent-replay.ts";
@@ -80,7 +80,6 @@ let animationTimer: ReturnType<typeof setTimeout> | undefined;
 let view: TableView | undefined;
 let staged: Card[] = [];
 let playCapacity = 0;
-let deckBack = 0;
 let busy: number | undefined;
 let pendingCommand: Command | undefined;
 let automaticFrame: number | undefined;
@@ -489,7 +488,7 @@ function showTable(snapshot: TableView, queue: Card[], animate: boolean, speed =
   showDanger(snapshot);
   scene?.show({
     handSortingStrategy: settings.handSortingStrategy,
-    view: snapshot, staged: queue, back: deckBack, locked: autoplay || !inputReady(),
+    view: snapshot, staged: queue, locked: autoplay || !inputReady(),
     keepGroupsTogether: settings.keepGroupsTogether,
     targetCardWidth: settings.targetCardWidth,
     dimUnplayable: settings.dimUnplayable,
@@ -836,13 +835,6 @@ function setupDialogs(): void {
   for (const button of document.querySelectorAll<HTMLButtonElement>("dialog [data-close]")) {
     button.onclick = () => button.closest("dialog")?.close();
   }
-
-  try {
-    const saved = Number(localStorage.getItem("crazy-eights-back") ?? 0);
-    if (Number.isInteger(saved) && DECKS[saved]) deckBack = saved;
-  } catch {
-    // An offline file can still be played when the browser disables storage.
-  }
 }
 
 function autoplayPaused(): boolean {
@@ -941,7 +933,7 @@ async function start(): Promise<void> {
     if (tableReady) void startNetwork(invite);
     else incomingInvitation = invite;
   });
-  const [images] = await Promise.all([loadCardArt(), document.fonts.load("700 14px Barlow Condensed")]);
+  await document.fonts.load("700 14px Barlow Condensed");
   startLocal(false);
 
   const density = Math.min(window.devicePixelRatio || 1, 3);
@@ -958,7 +950,7 @@ async function start(): Promise<void> {
       if (incomingInvitation || hosted) void startNetwork(incomingInvitation, hosted);
       else send({ type: "snapshot" });
     },
-  }, images, density);
+  }, density);
   new Phaser.Game({
     type: Phaser.AUTO,
     parent,
@@ -1095,7 +1087,7 @@ function bindConnection(): void {
       element<HTMLTextAreaElement>("game-state-json").value = JSON.stringify({
         formatVersion: 1, exportedAt: new Date().toISOString(), mode: "ai",
         game: response.state,
-        client: { staged, playCapacity, settings, deckBack, replaying },
+        client: { staged, playCapacity, settings, replaying },
       }, null, 2);
       element("game-state-copy-status").textContent = "";
       if (!gameStateDialog.open) gameStateDialog.showModal();

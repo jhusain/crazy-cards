@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { PLAY_SLOTS, canFollowInQueue, otherSeat, wildSuitOptions, type Card, type TableView } from "@crazy-eights/protocol";
-import { CardTextures, describeCard, loadCardArt, type FaceTexture } from "./cards.ts";
+import { CardTextures, describeCard, type FaceTexture } from "./cards.ts";
 import { shuffleFrame } from "./shuffle-animation.ts";
 import { wildReel, wildReelSounds } from "./wild-reel.ts";
 import { arrivalProgress, slamDescent, slamFlight, slamPlayFlight, slamShadow, impactEnvelope, scatteredCard, tableShock } from "./play-impact.ts";
@@ -43,7 +43,7 @@ class CardImage extends Phaser.GameObjects.Container {
 type BoardState = {
   handSortingStrategy: HandSortingStrategy;
   flickSettings: FlickSettings;
-  view: TableView; staged: Card[]; back: number; locked: boolean; targetCardWidth: number; keepGroupsTogether: boolean; dimUnplayable: boolean; replaying: boolean; playCapacity?: number;
+  view: TableView; staged: Card[]; locked: boolean; targetCardWidth: number; keepGroupsTogether: boolean; dimUnplayable: boolean; replaying: boolean; playCapacity?: number;
 };
 type Controls = {
   tapCard: (id: number) => void; flickCard: (id: number, order?: readonly number[]) => void;
@@ -115,7 +115,6 @@ export class CardTable extends Phaser.Scene {
     private readonly automaticPanel: HTMLElement,
     private readonly opponentButton: HTMLButtonElement,
     private readonly controls: Controls,
-    private readonly images: Awaited<ReturnType<typeof loadCardArt>>,
     private readonly density: number,
   ) {
     super("card-table");
@@ -123,7 +122,7 @@ export class CardTable extends Phaser.Scene {
   }
 
   create(): void {
-    this.art = new CardTextures(this.textures, this.images, this.textureDensity);
+    this.art = new CardTextures(this.textures, this.textureDensity);
     this.bindStockGesture();
     this.cameras.main.setOrigin(0);
     const resize = () => {
@@ -186,7 +185,7 @@ export class CardTable extends Phaser.Scene {
       delete this.board.dataset.wildPhase;
       this.children.removeAll(true);
       this.stockDrag = undefined;
-      const { view, staged = [], back = 0 } = this.state ?? {};
+      const { view, staged = [] } = this.state ?? {};
       const stagedIds = new Set(staged.map(card => card.id));
       const committedIds = new Set(view?.queuedCards);
       const cards = sortVisibleHand(
@@ -262,7 +261,7 @@ export class CardTable extends Phaser.Scene {
       if (textureDensity !== this.textureDensity) {
         this.art.destroy();
         this.textureDensity = textureDensity;
-        this.art = new CardTextures(this.textures, this.images, textureDensity);
+        this.art = new CardTextures(this.textures, textureDensity);
       }
       const stock = layout.piles.stock;
       const felt = this.add.graphics().setDepth(-1);
@@ -294,7 +293,7 @@ export class CardTable extends Phaser.Scene {
       const reshuffling = animate && !!previous && previous.view.round === view.round &&
         previous.view.revision !== view.revision && !!view.event?.reshuffles?.length;
       const oldPpc = view.event?.reshuffles?.[0]?.pointsBefore ?? view.pointsPerCard;
-      const backTexture = reshuffling ? this.art.rollBack(back, oldPpc, oldPpc, 1) : this.art.back(back, view.pointsPerCard);
+      const backTexture = reshuffling ? this.art.rollBack(oldPpc, oldPpc, 1) : this.art.back(view.pointsPerCard);
       if (this.stockDrawOrigin) {
         this.priorCardPositions.set(this.stockDrawOrigin.id, this.stockDrawOrigin.position);
       }
@@ -323,7 +322,7 @@ export class CardTable extends Phaser.Scene {
       const stockDraw = reshuffling || (reflow && draw.count + opponentDraw.count > 0)
         ? (opponentDraw.count ? opponentDraw : draw) : undefined;
       this.drawStock(stock, view.stockCount, backTexture, layout, adjusting,
-        stockDraw, view.event?.kind === "shuffle" ? 0 : previous?.view.stockCount, back, registerReflow, original, registerReturn);
+        stockDraw, view.event?.kind === "shuffle" ? 0 : previous?.view.stockCount, registerReflow, original, registerReturn);
       this.drawDiscard(view, layout, stock, priorPositions, oldEnemy, adjusting, phases,
         motion && priorRound ? previous : undefined, registerReflow, registerReturn);
       this.drawOpponent(enemy, backTexture, stock, opponentDraw, initialDeal, opponentPlayed, oldEnemy, registerReflow);
@@ -417,7 +416,7 @@ export class CardTable extends Phaser.Scene {
 
   private drawStock(
     deck: CardPosition, count: number, texture: string, layout: Layout, adjusting: boolean,
-    draw: DrawTimeline | undefined, beforeCount = count, back = 0,
+    draw: DrawTimeline | undefined, beforeCount = count,
     reflow?: RegisterReflow, original = layout, returnPiles?: RegisterReflow,
   ): void {
     const visible = draw || reflow ? 4 : stockLayerCount(count);
@@ -452,7 +451,7 @@ export class CardTable extends Phaser.Scene {
     let stamp = "";
     const points = (old: number, next: number, progress = 1) => {
       const nextStamp = `${old}:${next}:${progress}`;
-      if (stamp !== nextStamp) { this.art.rollBack(back, old, next, progress); stamp = nextStamp; }
+      if (stamp !== nextStamp) { this.art.rollBack(old, next, progress); stamp = nextStamp; }
     };
     const span = draw.total - draw.start;
     this.tween(span, progress => {
@@ -1128,7 +1127,7 @@ export class CardTable extends Phaser.Scene {
       const home = this.priorStockPosition;
       if (!home || !this.state) return;
       // Create the preview before sending the request; replies may arrive on the next task.
-      const image = this.drawImage(this.art.back(this.state.back, this.state.view.pointsPerCard), home, CARD_DEPTH.staging + 100);
+      const image = this.drawImage(this.art.back(this.state.view.pointsPerCard), home, CARD_DEPTH.staging + 100);
       this.stockDrag = { pointer: event.pointerId, x: event.clientX, y: event.clientY, home: { ...home }, position: { ...home }, image, released: false };
       if (!this.controls.beginDeckDraw()) {
         image.destroy(); this.stockDrag = undefined;
