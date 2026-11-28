@@ -31,6 +31,35 @@ function command(server: GameServer, seat: Seat, command: Command): Response {
   return JSON.parse(server.handleJSON(seat, JSON.stringify({ revision: current.revision, requestId: 1, command }))) as Response;
 }
 
+function assertFullDeck(server: GameServer): void {
+  const state = server.saveMatch();
+  const cards = [...state.hands.flat(), ...state.stock, ...state.discard, ...state.lastPlay];
+  assert.equal(cards.length, 52);
+  assert.deepEqual(cards.map(card => card.id).sort((a, b) => a - b), standardDeck().map(card => card.id));
+}
+
+test("fresh deals and restarts retain all 52 cards for AI and human matches", () => {
+  // Exercise every result of the old 0–9 removal roll, rather than only zero.
+  for (const cpuSeat of [null, 1] as const) for (let value = 0; value < 10; value++) {
+    const server = new GameServer(cpuSeat, limit => value % limit);
+    const checkDeal = () => {
+      const state = server.saveMatch();
+      assertFullDeck(server);
+      assert.deepEqual(state.hands.map(hand => hand.length), [8, 8]);
+      assert.equal(state.stock.length, 35);
+      assert.equal(state.lastPlay.length, 1);
+      assert.equal(state.discard.length, 0);
+    };
+    checkDeal();
+    assert.equal(command(server, 0, { type: "restart" }).type, "state");
+    checkDeal();
+    if (server.view(0).turn === 1 && cpuSeat === 1) {
+      assert(server.stepComputer());
+      assertFullDeck(server);
+    }
+  }
+});
+
 test("projects only the authenticated seat’s hand and rejects stale or malformed moves", () => {
   const server = rigged([card(7, "hearts").id], [card(7, "spades").id], card(3, "hearts").id);
   const view = command(server, 0, { type: "snapshot" }).view;
@@ -125,6 +154,7 @@ test("100 seeded computer-vs-computer rounds reach a result through the JSON bou
   const server = new GameServer(1, random);
   let sawTie = false;
   for (let round = 1; round <= 100; round++) {
+    assertFullDeck(server);
     for (let move = 0; !server.view(0).result && move < 500; move++) {
       const before = server.view(0);
       if (before.turn === 1) assert(server.stepComputer());
@@ -134,6 +164,7 @@ test("100 seeded computer-vs-computer rounds reach a result through the JSON bou
         assert.equal(next.type, "state", next.type === "error" ? next.message : undefined);
       }
       const after = server.view(0);
+      assertFullDeck(server);
       if (!after.result && after.hand.length === 0 && after.turn === 1) sawTie = true;
       assert.equal(new Set([...after.hand, ...after.lastPlay].map(item => item.id)).size, after.hand.length + after.lastPlay.length);
     }

@@ -193,8 +193,6 @@ export class GameServer {
     this.pointsPerCard = this.roundStartingPpc;
     const cards = shuffled(standardDeck(), this.random);
     const opening = cards.pop()!;
-    const removed = this.random(DEFAULT_RULES.maxRemovedCards + 1);
-    cards.splice(cards.length - removed, removed);
     this.hands = [cards.splice(-DEFAULT_RULES.startingCards).reverse(), cards.splice(-DEFAULT_RULES.startingCards).reverse()];
     this.stock = cards;
     this.discard = [];
