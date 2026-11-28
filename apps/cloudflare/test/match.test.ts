@@ -83,7 +83,7 @@ test("Cloudflare authenticates seats, keeps draws private, and restores the matc
   assert.equal(guestState.view.seat, 1);
   assert.equal(hostState.view.opponentCount, guestState.view.hand.length);
   assert(hostState.view.hand.every((card: { id: number }) => !guestState.view.hand.some((other: { id: number }) => other.id === card.id)));
-  const uninvited = await connect(worker, "guest", random());
+  const uninvited = await connect(worker, "guest", random(), random());
   assert.equal((await uninvited.next(msg => msg.type === "close")).code, 4001);
 
   const [actor, opponent] = hostState.view.turn === 0 ? [host, guest] : [guest, host];
@@ -98,11 +98,17 @@ test("Cloudflare authenticates seats, keeps draws private, and restores the matc
   assert.equal(observation.view.event.drawnCards, undefined);
   assert.equal(observation.requestId, undefined);
 
+  const freshGuest = await connect(worker, "guest", random());
+  const guestReconnected = await freshGuest.next(msg => msg.type === "state");
+  assert.equal(guestReconnected.view.seat, 1);
+  assert.equal(guestReconnected.view.revision, draw.view.revision);
+  assert.equal((await guest.next(msg => msg.type === "close")).code, 4002);
+
   await worker.unsafeEvictDurableObject("crazy-cards", "MatchRoom", { name: room, webSockets: "close" });
   const rejoinedHost = await connect(worker, "host", hostKey);
   const restored = await rejoinedHost.next(msg => msg.type === "state");
   assert.equal(restored.view.revision, draw.view.revision);
-  const rejoinedGuest = await connect(worker, "guest", guestKey);
+  const rejoinedGuest = await connect(worker, "guest", random());
   const guestRestored = await rejoinedGuest.next(msg => msg.type === "state");
   assert.equal(guestRestored.view.revision, draw.view.revision);
   assert.equal(guestRestored.view.seat, 1);

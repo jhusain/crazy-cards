@@ -19,7 +19,6 @@ function animationTiming(value: { animate?: unknown }): typeof defaultTiming {
 interface Room {
   host: string;
   invitation: string;
-  guest?: string;
   match?: ReturnType<GameServer["saveMatch"]>;
   timing: [typeof defaultTiming, typeof defaultTiming];
   expiresAt: number;
@@ -65,9 +64,7 @@ export class MatchRoom extends DurableObject<Env> {
     if (room.invitation !== invitation || role === "host" && room.host !== credential) {
       return this.reject("This invitation is invalid.");
     }
-    if (role === "guest" && room.guest && room.guest !== credential) {
-      return this.reject("The guest seat is already taken.");
-    }
+    // The invitation also authorizes returning guests across tabs and devices.
 
     const seat: Seat = role === "host" ? 0 : 1;
     const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
@@ -76,9 +73,7 @@ export class MatchRoom extends DurableObject<Env> {
     this.ctx.acceptWebSocket(server, [tag]);
     for (const previous of existing) previous.close(4002, "Seat reconnected");
 
-    if (seat === 1) room.guest = credential;
-    if (this.room) this.ctx.storage.kv.put("room", room);
-    else await this.save(room);
+    if (!this.room) await this.save(room);
     return new Response(null, { status: 101, webSocket: client, headers: { "Sec-WebSocket-Protocol": NETWORK_PROTOCOL } });
   }
 
