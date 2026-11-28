@@ -6,6 +6,8 @@ import {
 import { computerMove, sortPlayerHand } from "./computer.ts";
 import { DEFAULT_RULES, randomIndex, shuffled, standardDeck, type RandomIndex } from "./rules.ts";
 
+const MAX_POINTS_PER_CARD = 16;
+
 function isRequest(value: unknown): value is Request {
   if (typeof value !== "object" || value === null) return false;
   const { requestId, revision, command } = value as Partial<Request>;
@@ -61,8 +63,17 @@ export class GameServer {
     this.automaticForcedTurns = automaticForcedTurns;
     this.random = random;
     this.autoplay = autoplay;
-    if (savedMatch) Object.assign(this, structuredClone(savedMatch));
-    else this.deal();
+    if (savedMatch) {
+      Object.assign(this, structuredClone(savedMatch));
+      this.roundStartingPpc = Math.min(this.roundStartingPpc, MAX_POINTS_PER_CARD);
+      this.pointsPerCard = Math.min(this.pointsPerCard, MAX_POINTS_PER_CARD);
+      for (const reshuffle of this.event?.reshuffles ?? []) {
+        reshuffle.pointsBefore = Math.min(reshuffle.pointsBefore, MAX_POINTS_PER_CARD);
+        reshuffle.pointsAfter = Math.min(reshuffle.pointsAfter, MAX_POINTS_PER_CARD);
+      }
+    } else {
+      this.deal();
+    }
   }
 
   /** Private match state for the room's storage. Use view() for player-facing data. */
@@ -189,7 +200,7 @@ export class GameServer {
   }
 
   private deal(): void {
-    this.roundStartingPpc = this.result?.winner === "tie" ? this.roundStartingPpc * 2 : 1;
+    this.roundStartingPpc = this.result?.winner === "tie" ? Math.min(this.roundStartingPpc * 2, MAX_POINTS_PER_CARD) : 1;
     this.pointsPerCard = this.roundStartingPpc;
     const cards = shuffled(standardDeck(), this.random);
     const opening = cards.pop()!;
@@ -316,7 +327,7 @@ export class GameServer {
 
   private recycleDiscard(drawIndex: number): DeckReshuffle {
     const reshuffle = { drawIndex, stockCount: this.discard.length,
-      pointsBefore: this.pointsPerCard, pointsAfter: this.pointsPerCard * 2 };
+      pointsBefore: this.pointsPerCard, pointsAfter: Math.min(this.pointsPerCard * 2, MAX_POINTS_PER_CARD) };
     this.pointsPerCard = reshuffle.pointsAfter;
     this.stock = shuffled(this.discard, this.random);
     this.discard = [];

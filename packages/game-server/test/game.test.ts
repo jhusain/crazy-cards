@@ -519,6 +519,36 @@ test("ties double the next starting PPC independently of in-round recycling",()=
   assert.equal(command(server,0,{type:"next-round"}).view.pointsPerCard,1);
 });
 
+test("ties and deck wraps cap points per card at sixteen", () => {
+  const server = new GameServer(null);
+  for (const expected of [2, 4, 8, 16, 16]) {
+    endgame(server, "tie");
+    assert.equal(command(server, 0, { type: "next-round" }).view.pointsPerCard, expected);
+  }
+  Object.assign(server, {
+    hands: [[card(6, "clubs")], [card(7, "hearts")]], turn: 0, stock: [],
+    discard: [card(4, "clubs"), card(5, "clubs")], lastPlay: [card(3, "clubs")],
+    lastPlaySize: 1, drewThisTurn: false,
+  });
+  const draw = command(server, 0, { type: "draw" }).view;
+  assert.equal(draw.pointsPerCard, 16);
+  assert.equal(draw.event?.drawCount, 1);
+  assert.deepEqual(draw.event?.reshuffles, [{ drawIndex: 0, stockCount: 2, pointsBefore: 16, pointsAfter: 16 }]);
+  assert.deepEqual(endgame(server, 0, 2).view.result, { winner: 0, points: 32 });
+  assert.equal(command(server, 0, { type: "next-round" }).view.pointsPerCard, 1);
+});
+
+test("restoring an older room caps its active scoring and shuffle display", () => {
+  const saved = new GameServer(null).saveMatch();
+  saved.pointsPerCard = 64;
+  saved.roundStartingPpc = 32;
+  saved.event = { kind: "draw", seat: 0, reshuffles: [{ drawIndex: 0, stockCount: 2, pointsBefore: 32, pointsAfter: 64 }] };
+  const restored = GameServer.restoreMatch(saved).saveMatch();
+  assert.equal(restored.pointsPerCard, 16);
+  assert.equal(restored.roundStartingPpc, 16);
+  assert.deepEqual(restored.event?.reshuffles, [{ drawIndex: 0, stockCount: 2, pointsBefore: 16, pointsAfter: 16 }]);
+});
+
 test("three decisive rounds end a match by total points, recording both players' wins",()=>{
   const server=new GameServer(null);
   endgame(server,"tie");command(server,0,{type:"next-round"});
