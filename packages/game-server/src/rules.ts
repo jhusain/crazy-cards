@@ -4,7 +4,6 @@ export const DEFAULT_RULES = {
   startingCards: 8,
   pickupCards: 2,
   superPickupCards: 5,
-  maxRemovedCards: 9,
 } as const;
 
 function specialFor(rank: number, suit: Card["suit"]): Special {
