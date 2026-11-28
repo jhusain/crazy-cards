@@ -32,7 +32,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   animationSpeed: .7, aiPauseMs: 1500, dangerWarning: true, dangerThreshold: 1, targetCardWidth: 240, keepGroupsTogether: true,
   groupExceptWild: true, groupExceptTwo: true, autoStaged: false, autoPass: false, automaticDelayMs: 3000,
   autoPickupNoEligible: false, autoPickupSameEligible: false, autoSingle: false, autoSingleExcludeWild: false, autoSingleExcludeTwo: false,
-  autoSingleExcludeQueen: false, autoSingleIgnoreExclusionsWhenOpponentEmpty: false, autoSingleSkips: false, dimUnplayable: false,
+  autoSingleExcludeQueen: false, autoSingleIgnoreExclusionsWhenOpponentEmpty: false, autoSingleSkips: false, dimUnplayable: true,
 };
 
 export function readSettings(value: unknown): GameSettings {
@@ -71,6 +71,6 @@ export function readSettings(value: unknown): GameSettings {
     autoSingleExcludeQueen: typeof autoSingleExcludeQueen === "boolean" ? autoSingleExcludeQueen : false,
     autoSingleIgnoreExclusionsWhenOpponentEmpty: autoSingleIgnoreExclusionsWhenOpponentEmpty === true,
     autoSingleSkips: typeof autoSingleSkips === "boolean" ? autoSingleSkips : false,
-    dimUnplayable: typeof dimUnplayable === "boolean" ? dimUnplayable : false,
+    dimUnplayable: typeof dimUnplayable === "boolean" ? dimUnplayable : DEFAULT_SETTINGS.dimUnplayable,
   };
 }

@@ -220,9 +220,9 @@ test("a forced draw that offers a choice is excluded, along with voluntary autom
 
 test("automatic action preferences default off, persist, and migrate the earlier cancel delay",()=>{
   const settings=readSettings({autoPickup:true,autoSingle:true,autoSingleExcludeWild:true,autoSingleExcludeTwo:true,
-    autoSingleExcludeQueen:true,autoSingleSkips:true,dimUnplayable:true,automaticDelayMs:10000});
+    autoSingleExcludeQueen:true,autoSingleSkips:true,automaticDelayMs:10000});
   assert.deepEqual(readSettings(JSON.parse(JSON.stringify(settings))),settings);
-  for(const key of ["autoPickupNoEligible","autoPickupSameEligible","autoSingle","autoSingleExcludeWild","autoSingleExcludeTwo","autoSingleExcludeQueen","autoSingleSkips","dimUnplayable"] as const){
+  for(const key of ["autoPickupNoEligible","autoPickupSameEligible","autoSingle","autoSingleExcludeWild","autoSingleExcludeTwo","autoSingleExcludeQueen","autoSingleSkips"] as const){
     assert.equal(DEFAULT_SETTINGS[key],false);
     assert.equal(settings[key],true);
     assert.equal(readSettings({[key]:"true"})[key],false);
@@ -230,6 +230,13 @@ test("automatic action preferences default off, persist, and migrate the earlier
   assert.equal(readSettings({autoPickup:true,autoPickupNoEligible:false}).autoPickupNoEligible,false);
   assert.equal(readSettings({autoPassDelayMs:5000}).automaticDelayMs,5000);
   assert.equal(readSettings({autoPassDelayMs:5000,automaticDelayMs:2000}).automaticDelayMs,2000);
+});
+
+test("dimming defaults on and preserves an explicit off preference", () => {
+  assert.equal(DEFAULT_SETTINGS.dimUnplayable, true);
+  assert.equal(readSettings({}).dimUnplayable, true);
+  assert.equal(readSettings({ dimUnplayable: "false" }).dimUnplayable, true);
+  assert.equal(readSettings({ dimUnplayable: false }).dimUnplayable, false);
 });
 
 test("queued skip prefixes end at landing and the final pickup waits for pile return and reflow", () => {
