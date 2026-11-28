@@ -52,14 +52,17 @@ export class AutomaticActions {
     }
   }
 
-  next(view: TableView, settings: GameSettings): AutomaticAction | undefined {
+  next(view: TableView, settings: GameSettings, network = false): AutomaticAction | undefined {
     if (view.result || view.turn !== view.seat || view.queuedCards.length) return;
     const cards = automaticPlay(view, settings);
     if (cards) return { type: "play", cards };
     if (settings.autoPass && view.opponentCount > 0 && view.drewThisTurn && this.passRevision === view.revision) {
       return { type: "pass" };
     }
-    if (settings.autoPickup && !view.drewThisTurn && this.passedLeads && view.legalLeads.length > 0 &&
-        view.legalLeads.every(id => this.passedLeads!.has(id))) return { type: "draw" };
+    if (settings.autoPickup && !view.drewThisTurn) {
+      if (!view.legalLeads.length) return network ? { type: "draw" } : undefined;
+      const passed = this.passedLeads;
+      if (passed && view.legalLeads.every(id => passed.has(id))) return { type: "draw" };
+    }
   }
 }

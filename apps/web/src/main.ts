@@ -335,7 +335,7 @@ function automaticCandidate(): AutomaticAction | undefined {
       document.querySelector("dialog[open]") || canceledAutomaticRevision === view.revision) return;
   if (settings.autoStaged && staged.length) return { type: "play", cards: staged.slice() };
   if (hasManualPlay) return;
-  return automaticActions.next(view, settings);
+  return automaticActions.next(view, settings, !!network);
 }
 
 function startAutomaticAction(): void {
@@ -514,7 +514,9 @@ function replayWait(ms: number, signal: AbortSignal): Promise<void> {
 const tableTiming = (): TableTiming => ({ ...settings, animate: !reducedMotion.matches });
 
 function sendTiming(): void {
-  worker?.postMessage(JSON.stringify({ timing: tableTiming() }));
+  const timing = tableTiming();
+  const { animationSpeed, animate } = timing;
+  worker?.postMessage(JSON.stringify({ timing: network ? { animationSpeed, animate } : timing }));
 }
 
 async function replayOpponent(): Promise<void> {

@@ -26,7 +26,7 @@ function setup(enabled = true) {
     view: { ...new GameServer().view(0), revision: 10, turn: 0, seat: 0, hand: cards, legalLeads: [0], queuedCards: [], result: null },
     staged: [], playCapacity: 0, message: undefined, settings: { ...DEFAULT_SETTINGS, autoStaged: enabled },
     automaticFrame: undefined, automaticSession: undefined, canceledAutomaticRevision: undefined,
-    autoplay: false, automaticPanel: { hidden: true }, automaticActions: new AutomaticActions(),
+    network: undefined, autoplay: false, automaticPanel: { hidden: true }, automaticActions: new AutomaticActions(),
     canUseStock: () => true, render() {}, PLAY_SLOTS, canFollowInQueue, flickPlay, retainedFlickPlay,
     menu: { matches: () => blocked }, document: { querySelector: () => null },
     element: (id: string) => { if (!nodes.has(id)) nodes.set(id, { style: {} }); return nodes.get(id); },

@@ -3,21 +3,25 @@ import { GameServer } from "@crazy-eights/game-server";
 import type { Response as GameResponse, Seat } from "@crazy-eights/protocol";
 import { isMatchToken, isNetworkRequest, NETWORK_PROTOCOL } from "@crazy-eights/protocol/network";
 import { DEFAULT_SETTINGS, readSettings } from "../../web/src/settings.ts";
-import { tableAnimationTime, type TableTiming } from "../../web/src/table-timing.ts";
+import { tableAnimationTime } from "../../web/src/table-timing.ts";
 
 interface Env {
   MATCHES: DurableObjectNamespace<MatchRoom>;
 }
 
 const idleLifetime = 2 * 60 * 60 * 1000;
-const defaultTiming = { ...DEFAULT_SETTINGS, animate: true };
+const defaultTiming = { animationSpeed: DEFAULT_SETTINGS.animationSpeed, animate: true };
+
+function animationTiming(value: { animate?: unknown }): typeof defaultTiming {
+  return { animationSpeed: readSettings(value).animationSpeed, animate: value.animate !== false };
+}
 
 interface Room {
   host: string;
   invitation: string;
   guest?: string;
   match?: ReturnType<GameServer["saveMatch"]>;
-  timing: [TableTiming, TableTiming];
+  timing: [typeof defaultTiming, typeof defaultTiming];
   expiresAt: number;
   nextMoveAt?: number;
   closed?: boolean;
@@ -96,7 +100,7 @@ export class MatchRoom extends DurableObject<Env> {
     if (message.type === "join" && !socket.deserializeAttachment()) {
       socket.serializeAttachment(true);
       if (message.timing && typeof message.timing === "object") {
-        room.timing[seat] = { ...readSettings(message.timing), animate: message.timing.animate !== false };
+        room.timing[seat] = animationTiming(message.timing);
       }
       let game = room.match ? GameServer.restoreMatch(room.match) : undefined;
       const starting = !game && this.bothPresent();
@@ -122,7 +126,7 @@ export class MatchRoom extends DurableObject<Env> {
       return;
     }
     if (message.timing && typeof message.timing === "object") {
-      room.timing[seat] = { ...readSettings(message.timing), animate: message.timing.animate !== false };
+      room.timing[seat] = animationTiming(message.timing);
       this.ctx.storage.kv.put("room", room);
       return;
     }
@@ -131,7 +135,7 @@ export class MatchRoom extends DurableObject<Env> {
     const previousRevision = game.view(seat).revision;
     const response = JSON.parse(game.handleJSON(seat, data)) as GameResponse;
     if (response.type === "state" && response.view.revision !== previousRevision) {
-      this.updateMatch(room, game, message.command.type === "draw");
+      this.updateMatch(room, game);
       const saved = this.save(room);
       this.publish(game, seat, response);
       await saved;
@@ -155,6 +159,12 @@ export class MatchRoom extends DurableObject<Env> {
     }
     if (room.match && room.nextMoveAt !== undefined && room.nextMoveAt <= now) {
       const game = GameServer.restoreMatch(room.match);
+      // Existing rooms may still have a forced draw or pass alarm from an earlier deployment.
+      if (game.automaticMove !== "queued") {
+        delete room.nextMoveAt;
+        await this.save(room);
+        return;
+      }
       game.stepAutomatic();
       this.updateMatch(room, game);
       const saved = this.save(room);
@@ -165,12 +175,11 @@ export class MatchRoom extends DurableObject<Env> {
     }
   }
 
-  private updateMatch(room: Room, game: GameServer, voluntaryDraw = false): void {
+  private updateMatch(room: Room, game: GameServer): void {
     room.match = game.saveMatch();
     const now = Date.now();
     room.expiresAt = now + idleLifetime;
-    const move = game.automaticMove;
-    if (!move || move === "pass" && voluntaryDraw) {
+    if (game.automaticMove !== "queued") {
       delete room.nextMoveAt;
       return;
     }
@@ -178,7 +187,7 @@ export class MatchRoom extends DurableObject<Env> {
       const timing = room.timing[seat];
       return tableAnimationTime(game.view(seat), timing.animationSpeed, timing.animate);
     }));
-    room.nextMoveAt = now + (move === "queued" ? delay + 80 : Math.max(delay, move === "draw" ? 850 : 900));
+    room.nextMoveAt = now + delay + 80;
   }
 
   private async save(room: Room): Promise<void> {

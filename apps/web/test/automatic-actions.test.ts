@@ -36,6 +36,18 @@ test("auto pickup uses the previous passed choices and is invalidated by a penal
   assert.equal(actions.next(penalty,{...settings,autoSingle:false}),undefined);
 });
 
+test("network Auto pickup handles a turn with no legal cards once", () => {
+  const actions = new AutomaticActions();
+  const before = snapshot({ legalLeads: [] });
+  const pickup = { ...DEFAULT_SETTINGS, autoPickup: true };
+  assert.deepEqual(actions.next(before, pickup, true), { type: "draw" });
+  assert.equal(actions.next(before, DEFAULT_SETTINGS, true), undefined);
+  assert.equal(actions.next(before, pickup), undefined);
+  assert.equal(actions.next({ ...before, turn: 1 }, pickup, true), undefined);
+  const after = { ...before, drewThisTurn: true, revision: 2 };
+  assert.equal(actions.next(after, pickup, true), undefined);
+});
+
 test("automatic cards must be the sole non-excluded legal lead and match the active suit or rank",()=>{
   const actions=new AutomaticActions();
   const view=snapshot();
